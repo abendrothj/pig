@@ -62,7 +62,10 @@ pub fn show(
             egui::ScrollArea::vertical()
                 .max_height(100.0)
                 .show(ui, |ui| {
-                    ui.text_edit_multiline(&mut output.clone());
+                    ui.add(
+                        egui::TextEdit::multiline(&mut output.clone())
+                            .id_source(format!("node_output_text_{}", node.id)),
+                    );
                 });
         });
     }

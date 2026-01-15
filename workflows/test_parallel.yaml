@@ -1,0 +1,11 @@
+workflow: "Parallel Test Workflow"
+steps:
+  - run: EchoPlugin
+    id: step1
+    input: "Parallel step 1"
+  - run: EchoPlugin
+    id: step2
+    input: "Parallel step 2"
+  - run: EchoPlugin
+    id: step3
+    input: "Parallel step 3"

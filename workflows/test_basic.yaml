@@ -1,0 +1,5 @@
+workflow: "Basic Test Workflow"
+steps:
+  - run: EchoPlugin
+    id: step1
+    input: "Hello from test workflow!"

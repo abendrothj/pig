@@ -1,0 +1,22 @@
+workflow: "Fan-In Merge Pattern"
+description: "Multiple independent sources feed into a single merge step"
+steps:
+  # Level 0: Three independent data sources (run in parallel)
+  - run: EchoPlugin
+    input: "Data source 1: Customer feedback"
+    cache_key: "source1"
+  
+  - run: EchoPlugin
+    input: "Data source 2: Sales metrics"
+    cache_key: "source2"
+  
+  - run: EchoPlugin
+    input: "Data source 3: Support tickets"
+    cache_key: "source3"
+  
+  # Level 1: Merge step - uses source1 as primary input, waits for all sources
+  - run: EchoPlugin
+    input_from: step1
+    depends_on: ["step2", "step3"]
+    cache_key: "merged_report"
+    description: "Merge all data sources into comprehensive report"

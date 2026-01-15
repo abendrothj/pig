@@ -25,12 +25,37 @@ unsafe extern "C" fn run(input: *const PluginInput) -> PluginOutput {
         .send();
     let summary = match res {
         Ok(resp) => {
-            let json: serde_json::Value = resp.json().unwrap_or_default();
-            json["response"].as_str().unwrap_or("").to_string()
+            if resp.status().is_success() {
+                match resp.json::<serde_json::Value>() {
+                    Ok(json) => {
+                        if let Some(response) = json.get("response").and_then(|v| v.as_str()) {
+                            if response.trim().is_empty() {
+                                "error: SummarizerPlugin received empty response from Ollama. Make sure Ollama is running and the 'mistral' model is available.".to_string()
+                            } else {
+                                response.to_string()
+                            }
+                        } else {
+                            "error: SummarizerPlugin received invalid JSON response from Ollama. Expected 'response' field.".to_string()
+                        }
+                    }
+                    Err(e) => format!("error: SummarizerPlugin failed to parse JSON response: {}", e),
+                }
+            } else {
+                format!("error: SummarizerPlugin received HTTP error {} from Ollama. Make sure Ollama is running on localhost:11434.", resp.status())
+            }
         }
-        Err(e) => format!("Summarizer error: {}", e),
+        Err(e) => {
+            if e.is_connect() {
+                "error: SummarizerPlugin cannot connect to Ollama at http://localhost:11434. Make sure Ollama is running: 'ollama serve' or 'brew services start ollama'".to_string()
+            } else {
+                format!("error: SummarizerPlugin request failed: {}", e)
+            }
+        }
     };
-    let out = CString::new(summary).unwrap().into_raw();
+    let out = CString::new(summary).unwrap_or_else(|_| {
+        // Fallback if summary contains null bytes
+        CString::new("error: SummarizerPlugin output contains invalid characters").unwrap()
+    }).into_raw();
     PluginOutput { text: out }
 }
 

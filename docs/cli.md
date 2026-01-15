@@ -19,8 +19,25 @@ lao <COMMAND> [OPTIONS]
 - (Planned) `explain plugin <name>`  
   Show detailed info and examples for a plugin.
 
-## UI streaming
-- The desktop UI now supports real-time workflow execution with event streaming and optional parallel execution per DAG level.
+## Execution Modes
+
+### Sequential Execution
+- Steps execute one at a time, even if they're independent
+- Use for debugging, testing, or when strict ordering is required
+- Enabled via `--debug` flag or Debug mode in UI
+
+### Parallel Execution (Default)
+- Automatically detects and executes independent steps concurrently
+- Steps are grouped into execution levels based on dependencies
+- Steps within the same level run in parallel; levels execute sequentially
+- Significantly faster for workflows with independent branches
+- Enabled automatically when workflow has parallelizable steps
+
+### UI Execution
+- The desktop UI automatically detects parallelism and uses the appropriate execution mode
+- Single "Run" button changes to "Run (Parallel)" when parallel execution will be used
+- Debug mode checkbox forces sequential execution for debugging
+- Real-time event streaming shows step progress and execution levels
 
 ## Examples
 ```

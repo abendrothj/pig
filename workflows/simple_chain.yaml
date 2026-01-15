@@ -1,0 +1,16 @@
+workflow: "Simple Sequential Chain"
+description: "Basic sequential workflow for testing"
+steps:
+  - run: EchoPlugin
+    input: "Step 1: Initial processing"
+    cache_key: "step1"
+  
+  - run: EchoPlugin
+    input_from: step1
+    cache_key: "step2"
+    description: "Process output from step 1"
+  
+  - run: EchoPlugin
+    input_from: step2
+    cache_key: "step3"
+    description: "Final processing step"

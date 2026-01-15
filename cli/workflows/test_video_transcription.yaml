@@ -1,0 +1,10 @@
+workflow: "Video Transcription"
+steps:
+  - run: EchoPlugin
+    input: "presentation.mp4"
+  - run: EchoPlugin
+    input_from: step1
+  - run: WhisperPlugin
+    input_from: step2
+  - run: SummarizerPlugin
+    input_from: step3

@@ -1,4 +1,3 @@
-use crate::backend::WorkflowResult;
 use eframe::egui::{self, Color32, RichText, Ui};
 
 pub fn show(
@@ -6,7 +5,7 @@ pub fn show(
     logs: &mut Vec<String>,
     is_running: bool,
     execution_progress: f32,
-    workflow_result: &Option<WorkflowResult>,
+    workflow_result: &Option<crate::backend::WorkflowResult>,
 ) {
     ui.group(|ui| {
         ui.heading("📊 Live Logs & Execution Status");
@@ -41,14 +40,51 @@ pub fn show(
             }
         });
 
+        // Show parallel execution metrics if available
+        if let Some(ref result) = workflow_result {
+            if let Some(ref metrics) = result.parallel_execution {
+                ui.add_space(5.0);
+                ui.separator();
+                ui.add_space(5.0);
+                ui.group(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.colored_label(
+                            Color32::from_rgb(156, 39, 176),
+                            RichText::new("⚡ Parallel Execution Metrics").size(13.0).strong(),
+                        );
+                    });
+                    ui.add_space(5.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Levels:").size(11.0).weak());
+                        ui.label(RichText::new(format!("{}", metrics.execution_levels)).strong());
+                        ui.add_space(15.0);
+                        ui.label(RichText::new("Max concurrent:").size(11.0).weak());
+                        ui.label(RichText::new(format!("{}", metrics.max_parallelism)).strong());
+                        ui.add_space(15.0);
+                        ui.label(RichText::new("Avg concurrent:").size(11.0).weak());
+                        ui.label(RichText::new(format!("{:.1}", metrics.average_parallelism)).strong());
+                        ui.add_space(15.0);
+                        ui.colored_label(
+                            Color32::from_rgb(76, 175, 80),
+                            RichText::new(format!("{:.1}x speedup", metrics.speedup)).strong(),
+                        );
+                    });
+                });
+            }
+        }
+
         ui.add_space(10.0);
+
+        ui.add_space(8.0);
 
         // Log controls with better styling
         ui.horizontal(|ui| {
-            ui.label(RichText::new("📝 Logs:").size(14.0));
-            if ui.add(egui::Button::new("🗑️ Clear")).clicked() {
-                logs.clear();
-            }
+            ui.label(RichText::new("📝 Execution Logs").size(14.0).strong());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.add(egui::Button::new("🗑️ Clear").small()).clicked() {
+                    logs.clear();
+                }
+            });
         });
 
         // Live logs display with improved styling

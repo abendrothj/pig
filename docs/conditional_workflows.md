@@ -211,14 +211,14 @@ steps:
 
 ```bash
 cd core
-../target/release/lao-cli run ../workflows/conditional_example.yaml
+../target/release/lao-cli run ../workflows/your_workflow.yaml
 ```
 
 ### Validating Conditional Workflows
 
 ```bash
 cd core
-../target/release/lao-cli validate ../workflows/conditional_example.yaml
+../target/release/lao-cli validate ../workflows/your_workflow.yaml
 ```
 
 ### Testing with Enhanced Prompt Library
@@ -266,7 +266,7 @@ cd core
 export RUST_LOG=debug
 
 # Run with verbose output
-../target/release/lao-cli run ../workflows/conditional_example.yaml --verbose
+../target/release/lao-cli run ../workflows/your_workflow.yaml --verbose
 ```
 
 ## Integration with UI

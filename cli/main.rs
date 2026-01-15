@@ -348,7 +348,7 @@ fn main() {
             let plugin_dir = PathUtils::plugin_dir();
             let registry =
                 PluginRegistry::dynamic_registry(plugin_dir.to_str().unwrap_or("plugins"));
-            let dispatcher = match registry.plugins.get("PromptDispatcher") {
+            let dispatcher = match registry.plugins.get("PromptDispatcherPlugin") {
                 Some(d) => d,
                 None => {
                     eprintln!("PromptDispatcherPlugin not found");
@@ -424,7 +424,7 @@ fn main() {
             let plugin_dir = PathUtils::plugin_dir();
             let registry =
                 PluginRegistry::dynamic_registry(plugin_dir.to_str().unwrap_or("plugins"));
-            let dispatcher = match registry.plugins.get("PromptDispatcher") {
+            let dispatcher = match registry.plugins.get("PromptDispatcherPlugin") {
                 Some(d) => d,
                 None => {
                     eprintln!("PromptDispatcherPlugin not found");

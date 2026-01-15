@@ -1,11 +1,12 @@
-workflow: "Audio Tagged Summary"
+workflow: "Audio Transcription and Summary"
+description: "Transcribe audio file and create a summary"
 steps:
-  - run: Whisper
+  - run: WhisperPlugin
     input: "audio.wav"
-    description: "Transcribe the audio file to text."
-  - run: Summarizer
-    input_from: Whisper
-    description: "Summarize the transcribed text."
-  - run: Tagger
-    input_from: Summarizer
-    description: "Tag action items in the summary."
+    cache_key: "whisper_audio"
+    description: "Transcribe the audio file to text"
+  
+  - run: SummarizerPlugin
+    input_from: step1
+    cache_key: "summary_audio"
+    description: "Summarize the transcribed text"

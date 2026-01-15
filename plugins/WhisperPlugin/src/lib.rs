@@ -2,9 +2,70 @@ use lao_plugin_api::{PluginInput, PluginMetadata, PluginOutput, PluginVTablePtr}
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::process::Command;
+use std::env;
+use std::path::Path;
 
 unsafe extern "C" fn name() -> *const c_char {
     c"WhisperPlugin".as_ptr()
+}
+
+// Find whisper.cpp binary in common locations
+fn find_whisper_binary() -> Option<String> {
+    // Check environment variable first (highest priority)
+    if let Ok(path) = env::var("WHISPER_CPP_PATH") {
+        if Path::new(&path).exists() {
+            return Some(path);
+        }
+    }
+    
+    // Check PATH using `which` command (Unix/macOS)
+    #[cfg(unix)]
+    {
+        for cmd in &["whisper.cpp", "whisper-cpp"] {
+            if let Ok(output) = Command::new("which").arg(cmd).output() {
+                if output.status.success() {
+                    if let Ok(path_str) = String::from_utf8(output.stdout) {
+                        let path = path_str.trim().to_string();
+                        if !path.is_empty() && Path::new(&path).exists() {
+                            return Some(path);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Check common file system locations
+    let candidates = vec![
+        "./whisper.cpp",
+        "./whisper-cpp",
+        "/usr/local/bin/whisper.cpp",
+        "/usr/local/bin/whisper-cpp",
+        "/usr/bin/whisper.cpp",
+        "/usr/bin/whisper-cpp",
+        "~/.local/bin/whisper.cpp",
+        "~/.local/bin/whisper-cpp",
+    ];
+    
+    for candidate in candidates {
+        // Expand ~ to home directory
+        let expanded = if candidate.starts_with("~/") {
+            if let Ok(home) = env::var("HOME") {
+                candidate.replacen("~", &home, 1)
+            } else {
+                continue; // Skip if we can't expand ~
+            }
+        } else {
+            candidate.to_string()
+        };
+        
+        // Check if it exists
+        if Path::new(&expanded).exists() {
+            return Some(expanded);
+        }
+    }
+    
+    None
 }
 
 unsafe extern "C" fn run(input: *const PluginInput) -> PluginOutput {
@@ -15,7 +76,23 @@ unsafe extern "C" fn run(input: *const PluginInput) -> PluginOutput {
     }
     let c_str = CStr::from_ptr((*input).text);
     let audio_path = c_str.to_string_lossy();
-    let output = Command::new("./whisper.cpp").arg(&*audio_path).output();
+    
+    // Find whisper binary
+    let whisper_bin = match find_whisper_binary() {
+        Some(path) => path,
+        None => {
+            let error_msg = format!(
+                "whisper.cpp binary not found. Please install whisper.cpp or set WHISPER_CPP_PATH environment variable.\n\
+                Common locations checked: ./whisper.cpp, whisper.cpp (in PATH), /usr/local/bin/whisper.cpp\n\
+                Install from: https://github.com/ggerganov/whisper.cpp"
+            );
+            return PluginOutput {
+                text: CString::new(error_msg).unwrap().into_raw(),
+            };
+        }
+    };
+    
+    let output = Command::new(&whisper_bin).arg(&*audio_path).output();
     let text = match output {
         Ok(out) if out.status.success() => {
             CString::new(String::from_utf8_lossy(&out.stdout).to_string())
@@ -23,14 +100,24 @@ unsafe extern "C" fn run(input: *const PluginInput) -> PluginOutput {
                 .into_raw()
         }
         Ok(out) => CString::new(format!(
-            "whisper.cpp failed: {}",
+            "whisper.cpp failed: {}\nCommand: {} {}\nStderr: {}",
+            out.status,
+            whisper_bin,
+            audio_path,
             String::from_utf8_lossy(&out.stderr)
         ))
         .unwrap()
         .into_raw(),
-        Err(e) => CString::new(format!("Failed to run whisper.cpp: {}", e))
-            .unwrap()
-            .into_raw(),
+        Err(e) => CString::new(format!(
+            "Failed to run whisper.cpp: {}\nBinary path: {}\nAudio file: {}\n\n\
+            Troubleshooting:\n\
+            1. Ensure whisper.cpp is installed and in your PATH\n\
+            2. Or set WHISPER_CPP_PATH environment variable to the full path\n\
+            3. Verify the audio file exists: {}",
+            e, whisper_bin, audio_path, audio_path
+        ))
+        .unwrap()
+        .into_raw(),
     };
     PluginOutput { text }
 }

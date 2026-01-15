@@ -18,6 +18,13 @@ rfd = "0.15"
 env_logger = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
 
+[lib]
+name = "lao_ui"
+path = "src/lib.rs"
+
 [[bin]]
 name = "lao-ui"
-path = "src/main.rs" 
+path = "src/main.rs"
+
+[dev-dependencies]
+serial_test = "2.0" 

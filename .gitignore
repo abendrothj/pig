@@ -18,7 +18,7 @@ Cargo.lock
 *.AppImage
 *.msi
 *.zip
-
+/whisper.cpp/
 # Node/Svelte
 /ui/lao-ui/node_modules/
 /ui/lao-ui/.svelte-kit/
@@ -47,7 +47,7 @@ pnpm-debug.log*
 
 # Misc
 *.log
-
+.*
 # Vite/SvelteKit
 /ui/lao-ui/vite.config.js.timestamp-*
 /ui/lao-ui/vite.config.ts.timestamp-* plugins_runtime/

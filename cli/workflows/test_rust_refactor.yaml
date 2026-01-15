@@ -1,0 +1,6 @@
+workflow: "Rust Refactor"
+steps:
+  - run: EchoPlugin
+    input: "main.rs"
+  - run: SummarizerPlugin
+    input_from: step1

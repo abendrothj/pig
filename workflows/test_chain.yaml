@@ -1,0 +1,9 @@
+workflow: "Chain Test Workflow"
+steps:
+  - run: EchoPlugin
+    id: step1
+    input: "First step"
+  - run: EchoPlugin
+    id: step2
+    input_from: step1
+    depends_on: [step1]

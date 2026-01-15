@@ -1,0 +1,36 @@
+workflow: "Multi-Modal Analysis"
+steps:
+  - run: EchoPlugin
+    input: "content"
+  - run: WhisperPlugin
+    input_from: step1
+    condition:
+      condition_type: OutputContains
+      field: "step1"
+      operator: Contains
+      value: "audio"
+    retries: 2
+    retry_delay: 1000
+  - run: EchoPlugin
+    input_from: step1
+    condition:
+      condition_type: OutputContains
+      field: "step1"
+      operator: Contains
+      value: "image"
+    retries: 2
+    retry_delay: 1000
+  - run: EchoPlugin
+    input: "Processing failed"
+    condition:
+      condition_type: PreviousStepStatus
+      field: "step2"
+      operator: Equals
+      value: "error"
+  - run: SummarizerPlugin
+    depends_on: ["step2", "step3"]
+    condition:
+      condition_type: PreviousStepStatus
+      field: "step2"
+      operator: NotEquals
+      value: "error"

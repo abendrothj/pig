@@ -17,6 +17,7 @@ pub mod workflow_state;
 
 use lao_plugin_api::{PluginInputType, PluginOutputType};
 use plugins::*;
+use crate::cross_platform::PathUtils;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Workflow {
@@ -81,7 +82,7 @@ pub struct DagNode {
     pub parents: Vec<String>,
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct StepLog {
     pub step: usize,
     pub step_id: String,
@@ -284,10 +285,27 @@ pub fn run_workflow_yaml(path: &str) -> Result<Vec<StepLog>, String> {
     let workflow = load_workflow_yaml(path)?;
     let dag = build_dag(&workflow.steps)?;
     let registry = PluginRegistry::default_registry();
+    
+    let plugin_count = registry.plugin_count();
+    let plugin_names = registry.plugin_names();
+    
+    if plugin_count == 0 {
+        eprintln!("[ERROR] No plugins loaded! Cannot execute workflow.");
+        eprintln!("[INFO] Expected plugins directory: {}", PathUtils::plugin_dir().display());
+        eprintln!("[INFO] Make sure plugins are built: bash scripts/build-plugins.sh");
+        return Err(format!("No plugins loaded. Plugin directory: {}", PathUtils::plugin_dir().display()));
+    }
+    
+    println!("[DEBUG] Executing workflow with {} loaded plugins: {:?}", plugin_count, plugin_names);
 
     // Validate workflow
     let errors = validate_workflow_types(&dag, &registry);
     if !errors.is_empty() {
+        eprintln!("[ERROR] Workflow validation failed with {} errors", errors.len());
+        eprintln!("[INFO] Loaded plugins: {:?}", plugin_names);
+        for (step_idx, error_msg) in &errors {
+            eprintln!("[ERROR] Step {}: {}", step_idx, error_msg);
+        }
         return Err(format!("Workflow validation failed: {:?}", errors));
     }
 
@@ -397,7 +415,11 @@ pub fn run_workflow_yaml(path: &str) -> Result<Vec<StepLog>, String> {
             };
             unsafe { ((*plugin.vtable).free_output)(result) };
 
-            if !output_str.is_empty() && !output_str.contains("error") {
+            // Check if output indicates success (not empty and doesn't start with "error:")
+            let is_success = !output_str.trim().is_empty() 
+                && !output_str.trim().to_lowercase().starts_with("error:");
+            
+            if is_success {
                 // Success
                 outputs.insert(node_id.clone(), output_str.clone());
 
@@ -486,22 +508,61 @@ where
     let workflow = load_workflow_yaml(path)?;
     let dag = build_dag(&workflow.steps)?;
     let registry = PluginRegistry::default_registry();
+    
+    let plugin_count = registry.plugin_count();
+    let plugin_names = registry.plugin_names();
+    
+    if plugin_count == 0 {
+        eprintln!("[ERROR] No plugins loaded! Cannot execute workflow.");
+        eprintln!("[INFO] Expected plugins directory: {}", PathUtils::plugin_dir().display());
+        eprintln!("[INFO] Make sure plugins are built: bash scripts/build-plugins.sh");
+        return Err(format!("No plugins loaded. Plugin directory: {}", PathUtils::plugin_dir().display()));
+    }
+    
+    println!("[DEBUG] Executing workflow with {} loaded plugins: {:?}", plugin_count, plugin_names);
 
     let errors = validate_workflow_types(&dag, &registry);
     if !errors.is_empty() {
+        eprintln!("[ERROR] Workflow validation failed with {} errors", errors.len());
+        eprintln!("[INFO] Loaded plugins: {:?}", plugin_names);
+        for (step_idx, error_msg) in &errors {
+            eprintln!("[ERROR] Step {}: {}", step_idx, error_msg);
+        }
         return Err(format!("Workflow validation failed: {:?}", errors));
     }
 
     let execution_order = topo_sort(&dag)?;
 
     let mut logs = Vec::new();
-    let mut outputs = HashMap::new();
+    let mut outputs: HashMap<String, String> = HashMap::new();
 
     for (step_idx, node_id) in execution_order.iter().enumerate() {
         let node = dag.iter().find(|n| &n.id == node_id).unwrap();
         let step = &node.step;
 
         let mut params = step.params.clone();
+        
+        // Handle input_from: use output from referenced step as input
+        if let Some(input_from) = &step.input_from {
+            if let Some(step_output) = outputs.get(input_from) {
+                // Override the input parameter with the referenced step's output
+                if let Some(mapping) = params.as_mapping_mut() {
+                    mapping.insert(
+                        serde_yaml::Value::String("input".to_string()),
+                        serde_yaml::Value::String(step_output.clone()),
+                    );
+                } else {
+                    // Create new mapping if params wasn't a mapping
+                    let mut new_mapping = serde_yaml::Mapping::new();
+                    new_mapping.insert(
+                        serde_yaml::Value::String("input".to_string()),
+                        serde_yaml::Value::String(step_output.clone()),
+                    );
+                    params = serde_yaml::Value::Mapping(new_mapping);
+                }
+            }
+        }
+        
         substitute_params(&mut params, &outputs);
 
         let plugin_input = build_plugin_input(&params);
@@ -602,7 +663,11 @@ where
             };
             unsafe { ((*plugin.vtable).free_output)(result) };
 
-            if !output_str.is_empty() && !output_str.contains("error") {
+            // Check if output indicates success (not empty and doesn't start with "error:")
+            let is_success = !output_str.trim().is_empty() 
+                && !output_str.trim().to_lowercase().starts_with("error:");
+            
+            if is_success {
                 outputs.insert(node_id.clone(), output_str.clone());
                 if step.cache_key.is_some() {
                     fs::create_dir_all(&cache_dir).ok();
@@ -682,17 +747,401 @@ where
     Ok(logs)
 }
 
+// Group nodes by execution level (nodes at same level can run in parallel)
+fn group_by_execution_levels(dag: &[DagNode]) -> Vec<Vec<String>> {
+    let mut levels = Vec::new();
+    let mut remaining: std::collections::HashSet<String> = dag.iter().map(|n| n.id.clone()).collect();
+    let node_map: std::collections::HashMap<String, &DagNode> = dag.iter().map(|n| (n.id.clone(), n)).collect();
+    
+    while !remaining.is_empty() {
+        // Find all nodes with no remaining dependencies (all parents already executed)
+        let mut current_level = Vec::new();
+        for node_id in remaining.iter() {
+            if let Some(node) = node_map.get(node_id) {
+                let all_parents_done = node.parents.iter().all(|parent_id| {
+                    !remaining.contains(parent_id)
+                });
+                if all_parents_done {
+                    current_level.push(node_id.clone());
+                }
+            }
+        }
+        
+        if current_level.is_empty() {
+            // Circular dependency or error - break to avoid infinite loop
+            break;
+        }
+        
+        for node_id in &current_level {
+            remaining.remove(node_id);
+        }
+        
+        levels.push(current_level);
+    }
+    
+    levels
+}
+
 // Parallel execution by levels (nodes on same level run concurrently)
+// Strategy: Continue on error (other parallel steps still execute even if one fails)
 pub fn run_workflow_yaml_parallel_with_callback<F>(
     path: &str,
-    on_event: F,
+    mut on_event: F,
 ) -> Result<Vec<StepLog>, String>
 where
     F: FnMut(StepEvent) + Send,
 {
-    // NOTE: Current plugin VTable is not Send/Sync, so we cannot safely execute plugins across threads.
-    // Fallback to sequential streaming execution to preserve correctness.
-    run_workflow_yaml_with_callback(path, on_event)
+    let workflow = load_workflow_yaml(path)?;
+    let dag = build_dag(&workflow.steps)?;
+    let registry = std::sync::Arc::new(std::sync::Mutex::new(PluginRegistry::default_registry()));
+
+    {
+        let reg_guard = registry.lock().unwrap();
+        let plugin_count = reg_guard.plugin_count();
+        let plugin_names = reg_guard.plugin_names();
+        
+        if plugin_count == 0 {
+            eprintln!("[ERROR] No plugins loaded! Cannot validate workflow.");
+            eprintln!("[INFO] Expected plugins directory: {}", PathUtils::plugin_dir().display());
+            eprintln!("[INFO] Make sure plugins are built: bash scripts/build-plugins.sh");
+            return Err(format!("No plugins loaded. Plugin directory: {}", PathUtils::plugin_dir().display()));
+        }
+        
+        println!("[DEBUG] Validating workflow with {} loaded plugins: {:?}", plugin_count, plugin_names);
+        
+        let errors = validate_workflow_types(&dag, &reg_guard);
+        if !errors.is_empty() {
+            eprintln!("[ERROR] Workflow validation failed with {} errors", errors.len());
+            eprintln!("[INFO] Loaded plugins: {:?}", plugin_names);
+            for (step_idx, error_msg) in &errors {
+                eprintln!("[ERROR] Step {}: {}", step_idx, error_msg);
+            }
+            return Err(format!("Workflow validation failed: {:?}", errors));
+        }
+    }
+
+    // Group nodes by execution level for parallel execution
+    let execution_levels = group_by_execution_levels(&dag);
+    let node_map: std::collections::HashMap<String, &DagNode> = dag.iter().map(|n| (n.id.clone(), n)).collect();
+    
+    let logs_mutex = std::sync::Arc::new(std::sync::Mutex::new(Vec::<StepLog>::new()));
+    let outputs = std::sync::Arc::new(std::sync::Mutex::new(HashMap::new()));
+    let step_counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    
+    // Use channel for thread-safe event handling
+    // We'll collect events and process them after all threads complete
+    let (event_tx, event_rx) = std::sync::mpsc::channel::<StepEvent>();
+
+    // Execute each level sequentially, but nodes within a level can run in parallel
+    for level in execution_levels {
+        let mut handles = Vec::new();
+        
+        for node_id in level {
+            let node_id_clone = node_id.clone();
+            let node = node_map.get(&node_id_clone).unwrap();
+            let step = node.step.clone();
+            let outputs_clone = outputs.clone();
+            let logs_clone = logs_mutex.clone();
+            let step_counter_clone = step_counter.clone();
+            let event_tx_clone = event_tx.clone();
+            let registry_clone = registry.clone();
+            
+            let handle = std::thread::spawn(move || {
+                let step_idx = step_counter_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                
+                // Check if step should be executed based on conditions
+                // We need to check logs, so we need to read them
+                let should_execute = {
+                    let logs_guard = logs_clone.lock().unwrap();
+                    let dependent_step = step.depends_on.as_ref().and_then(|deps| deps.first());
+                    should_execute_step(&step, &logs_guard, dependent_step.map(|s| s.as_str()))
+                };
+                
+                if !should_execute {
+                    let _ = event_tx_clone.send(StepEvent {
+                        step: step_idx,
+                        step_id: node_id_clone.clone(),
+                        runner: step.run.clone(),
+                        status: "skipped".to_string(),
+                        attempt: 1,
+                        message: Some("condition not met".to_string()),
+                        output: None,
+                        error: None,
+                    });
+                    let mut logs_guard = logs_clone.lock().unwrap();
+                    logs_guard.push(StepLog {
+                        step: step_idx,
+                        step_id: node_id_clone,
+                        runner: step.run.clone(),
+                        input: step.params.clone(),
+                        output: Some("skipped due to condition".to_string()),
+                        error: None,
+                        attempt: 1,
+                        input_type: None,
+                        output_type: None,
+                        validation: Some("skipped".to_string()),
+                    });
+                    return;
+                }
+                
+                // Build params with outputs from previous steps
+                let mut params = step.params.clone();
+                {
+                    let outputs_guard = outputs_clone.lock().unwrap();
+                    substitute_params(&mut params, &outputs_guard);
+                    
+                    // Handle input_from
+                    if let Some(input_from) = &step.input_from {
+                        if let Some(step_output) = outputs_guard.get(input_from) {
+                            if let Some(mapping) = params.as_mapping_mut() {
+                                mapping.insert(
+                                    serde_yaml::Value::String("input".to_string()),
+                                    serde_yaml::Value::String(step_output.clone()),
+                                );
+                            } else {
+                                let mut new_mapping = serde_yaml::Mapping::new();
+                                new_mapping.insert(
+                                    serde_yaml::Value::String("input".to_string()),
+                                    serde_yaml::Value::String(step_output.clone()),
+                                );
+                                params = serde_yaml::Value::Mapping(new_mapping);
+                            }
+                        }
+                    }
+                }
+                
+                let plugin_input = build_plugin_input(&params);
+                
+                // Get plugin info (need version for cache key)
+                let plugin_info = {
+                    let reg_guard = registry_clone.lock().unwrap();
+                    reg_guard.get(&step.run).map(|p| {
+                        (p.info.name.clone(), p.info.version.clone())
+                    })
+                };
+                
+                if plugin_info.is_none() {
+                    let _ = event_tx_clone.send(StepEvent {
+                        step: step_idx,
+                        step_id: node_id_clone.clone(),
+                        runner: step.run.clone(),
+                        status: "error".to_string(),
+                        attempt: 1,
+                        message: Some(format!("Plugin '{}' not found", step.run)),
+                        output: None,
+                        error: Some(format!("Plugin '{}' not found", step.run)),
+                    });
+                    let mut logs_guard = logs_clone.lock().unwrap();
+                    logs_guard.push(StepLog {
+                        step: step_idx,
+                        step_id: node_id_clone,
+                        runner: step.run.clone(),
+                        input: params,
+                        output: None,
+                        error: Some(format!("Plugin not found")),
+                        attempt: 1,
+                        input_type: None,
+                        output_type: None,
+                        validation: None,
+                    });
+                    return;
+                }
+                
+                let plugin_name = step.run.clone();
+                let (_, plugin_version) = plugin_info.unwrap();
+                let max_attempts = step.retries.unwrap_or(1) + 1;
+                let mut last_error = None;
+                
+                // Check cache on first attempt
+                let mut cache_status = None;
+                let cache_key_effective = if let Some(k) = &step.cache_key {
+                    k.clone()
+                } else {
+                    compute_default_cache_key(&step, &plugin_version)
+                };
+                let cache_dir = std_env::var("LAO_CACHE_DIR").unwrap_or_else(|_| "cache".to_string());
+                let cache_path = format!("{}/{}.json", cache_dir, cache_key_effective);
+                
+                // Try cache first
+                if let Ok(cached) = fs::read_to_string(&cache_path) {
+                    if let Ok(cached_output) = serde_json::from_str::<String>(&cached) {
+                        cache_status = Some("cache".to_string());
+                        let mut outputs_guard = outputs_clone.lock().unwrap();
+                        outputs_guard.insert(node_id_clone.clone(), cached_output.clone());
+                        let _ = event_tx_clone.send(StepEvent {
+                            step: step_idx,
+                            step_id: node_id_clone.clone(),
+                            runner: plugin_name.clone(),
+                            status: "cache".to_string(),
+                            attempt: 1,
+                            message: Some("cache hit".to_string()),
+                            output: Some(cached_output.clone()),
+                            error: None,
+                        });
+                        let mut logs_guard = logs_clone.lock().unwrap();
+                        logs_guard.push(StepLog {
+                            step: step_idx,
+                            step_id: node_id_clone,
+                            runner: plugin_name,
+                            input: params,
+                            output: Some(cached_output),
+                            error: None,
+                            attempt: 1,
+                            input_type: None,
+                            output_type: None,
+                            validation: cache_status,
+                        });
+                        return;
+                    }
+                }
+                
+                // Execute with retries
+                for attempt in 1..=max_attempts {
+                    let _ = event_tx_clone.send(StepEvent {
+                        step: step_idx,
+                        step_id: node_id_clone.clone(),
+                        runner: plugin_name.clone(),
+                        status: "running".to_string(),
+                        attempt,
+                        message: if attempt > 1 { Some("retrying".to_string()) } else { None },
+                        output: None,
+                        error: None,
+                    });
+                    
+                    // Execute plugin (serialized access through registry lock)
+                    let (output_str, success) = {
+                        let reg_guard = registry_clone.lock().unwrap();
+                        if let Some(plugin) = reg_guard.get(&plugin_name) {
+                            let result = unsafe { ((*plugin.vtable).run)(&plugin_input) };
+                            let output = unsafe {
+                                std::ffi::CStr::from_ptr(result.text)
+                                    .to_string_lossy()
+                                    .to_string()
+                            };
+                            unsafe { ((*plugin.vtable).free_output)(result) };
+                            // Check if output indicates success (not empty and doesn't start with "error:")
+                            let is_success = !output.trim().is_empty() 
+                                && !output.trim().to_lowercase().starts_with("error:");
+                            (output, is_success)
+                        } else {
+                            (format!("Plugin '{}' not found", plugin_name), false)
+                        }
+                    };
+                    
+                    if success {
+                        let mut outputs_guard = outputs_clone.lock().unwrap();
+                        outputs_guard.insert(node_id_clone.clone(), output_str.clone());
+                        
+                        // Save to cache if cache_key is set
+                        if step.cache_key.is_some() {
+                            fs::create_dir_all(&cache_dir).ok();
+                            let _ = fs::write(
+                                &cache_path,
+                                serde_json::to_string(&output_str).unwrap_or_default(),
+                            );
+                        }
+                        
+                        let _ = event_tx_clone.send(StepEvent {
+                            step: step_idx,
+                            step_id: node_id_clone.clone(),
+                            runner: plugin_name.clone(),
+                            status: "success".to_string(),
+                            attempt,
+                            message: None,
+                            output: Some(output_str.clone()),
+                            error: None,
+                        });
+                        
+                        let mut logs_guard = logs_clone.lock().unwrap();
+                        logs_guard.push(StepLog {
+                            step: step_idx,
+                            step_id: node_id_clone,
+                            runner: plugin_name,
+                            input: params,
+                            output: Some(output_str),
+                            error: None,
+                            attempt,
+                            input_type: None,
+                            output_type: None,
+                            validation: cache_status,
+                        });
+                        return;
+                    } else {
+                        last_error = Some(output_str.clone());
+                        let _ = event_tx_clone.send(StepEvent {
+                            step: step_idx,
+                            step_id: node_id_clone.clone(),
+                            runner: plugin_name.clone(),
+                            status: "error".to_string(),
+                            attempt,
+                            message: Some("attempt failed".to_string()),
+                            output: None,
+                            error: Some(output_str.clone()),
+                        });
+                        
+                        if attempt < max_attempts {
+                            let retry_delay = step.retry_delay.unwrap_or(1000);
+                            thread::sleep(Duration::from_millis(retry_delay));
+                        }
+                    }
+                }
+                
+                // All attempts failed
+                if let Some(error) = last_error {
+                    let mut logs_guard = logs_clone.lock().unwrap();
+                    logs_guard.push(StepLog {
+                        step: step_idx,
+                        step_id: node_id_clone,
+                        runner: plugin_name,
+                        input: params,
+                        output: None,
+                        error: Some(error),
+                        attempt: max_attempts,
+                        input_type: None,
+                        output_type: None,
+                        validation: None,
+                    });
+                }
+            });
+            
+            handles.push(handle);
+        }
+        
+        // Wait for all nodes in this level to complete (continue even if some fail)
+        for handle in handles {
+            let _ = handle.join();
+        }
+    }
+    
+    // Close event channel and collect all events
+    drop(event_tx);
+    
+    // Collect all events from channel
+    let mut collected_events = Vec::new();
+    while let Ok(event) = event_rx.try_recv() {
+        collected_events.push(event);
+    }
+    
+    // Also try receiving normally in case there are more
+    while let Ok(event) = event_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+        collected_events.push(event);
+    }
+    
+    // Process events in order
+    collected_events.sort_by_key(|e| e.step);
+    for event in collected_events {
+        on_event(event);
+    }
+    
+    // Collect logs from all threads
+    let mut logs = {
+        let logs_guard = logs_mutex.lock().unwrap();
+        logs_guard.iter().cloned().collect::<Vec<StepLog>>()
+    };
+    
+    // Sort logs by step index for consistent output
+    logs.sort_by_key(|l| l.step);
+    Ok(logs)
 }
 
 fn substitute_params(params: &mut serde_yaml::Value, outputs: &HashMap<String, String>) {

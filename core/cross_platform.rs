@@ -132,27 +132,39 @@ impl PathUtils {
     pub fn plugin_dir() -> PathBuf {
         // Try environment variable first
         if let Ok(plugin_dir) = env::var("LAO_PLUGIN_DIR") {
-            return PathBuf::from(plugin_dir);
+            let path = PathBuf::from(plugin_dir);
+            if path.exists() {
+                return path;
+            }
         }
 
         // Get current directory
         let current_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
-        // Check if we're in a subdirectory (like core/) and plugins/ exists in parent
-        let plugins_in_current = current_dir.join("plugins");
-        let plugins_in_parent = current_dir.parent().map(|p| p.join("plugins"));
-
-        if plugins_in_current.exists() {
-            plugins_in_current
-        } else if let Some(parent_plugins) = plugins_in_parent {
-            if parent_plugins.exists() {
-                parent_plugins
-            } else {
-                plugins_in_current
+        // Try multiple levels up to find plugins directory
+        // This handles cases where we're in subdirectories like ui/lao-ui/, core/, etc.
+        let mut search_dir = current_dir.clone();
+        let max_depth = 5; // Don't search too far up
+        
+        for _ in 0..max_depth {
+            let plugins_path = search_dir.join("plugins");
+            if plugins_path.exists() {
+                println!("[DEBUG] PathUtils::plugin_dir() found plugins at: {}", plugins_path.display());
+                return plugins_path;
             }
-        } else {
-            plugins_in_current
+            
+            // Try parent directory
+            if let Some(parent) = search_dir.parent() {
+                search_dir = parent.to_path_buf();
+            } else {
+                break;
+            }
         }
+        
+        // Fallback: use plugins/ relative to current directory
+        let fallback = current_dir.join("plugins");
+        println!("[DEBUG] PathUtils::plugin_dir() using fallback: {}", fallback.display());
+        fallback
     }
 
     /// Get the LAO cache directory
