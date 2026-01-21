@@ -3,12 +3,27 @@ use std::sync::{Arc, Mutex};
 
 use crate::backend::{list_available_workflows, list_plugins_for_ui, BackendState};
 use crate::components::{graph, logs, settings, toolbar};
+use crate::undo::CommandHistory;
+use crate::metrics::ExecutionMetrics;
+use crate::file_upload::FileDropState;
+use crate::timeline::TimelineState;
+use crate::multimodal::ModalityInfo;
 
 pub struct LaoApp {
     state: Arc<Mutex<BackendState>>,
 
     // UI Logic states
     graph_state: graph::GraphEditorState,
+    
+    // New feature states
+    undo_history: CommandHistory,
+    metrics: ExecutionMetrics,
+    file_state: FileDropState,
+    timeline_state: TimelineState,
+    modality_info: ModalityInfo,
+    show_metrics_panel: bool,
+    show_timeline_panel: bool,
+    show_modality_panel: bool,
 }
 
 impl LaoApp {
@@ -43,6 +58,18 @@ impl LaoApp {
         Self {
             state: Arc::new(Mutex::new(state)),
             graph_state: graph::GraphEditorState::default(),
+            undo_history: CommandHistory::new(),
+            metrics: ExecutionMetrics::new(),
+            file_state: FileDropState::default(),
+            timeline_state: TimelineState::default(),
+            modality_info: ModalityInfo {
+                input_modality: None,
+                output_modality: None,
+                data_flow: Vec::new(),
+            },
+            show_metrics_panel: false,
+            show_timeline_panel: false,
+            show_modality_panel: false,
         }
     }
 }
@@ -62,6 +89,22 @@ impl eframe::App for LaoApp {
         }
 
         // Handle keyboard shortcuts
+        // TODO: Integrate undo/redo with graph editing operations
+        if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Z)) {
+            if ctx.input(|i| i.modifiers.shift) {
+                // Cmd+Shift+Z: Redo
+                // if self.undo_history.can_redo() {
+                //     let _ = self.undo_history.redo(&mut editor_state);
+                // }
+            } else {
+                // Cmd+Z: Undo
+                // if self.undo_history.can_undo() {
+                //     let _ = self.undo_history.undo(&mut editor_state);
+                // }
+            }
+        }
+        
+        // Delete key handler
         if ctx.input(|i| i.key_pressed(egui::Key::Delete)) {
             let mut state = self.state.lock().unwrap();
             if let (Some(selected_id), Some(ref mut graph)) =
@@ -73,6 +116,21 @@ impl eframe::App for LaoApp {
                     .retain(|e| e.from != selected_id && e.to != selected_id);
                 self.graph_state.selected_node = None;
             }
+        }
+        
+        // Cmd+M: Toggle metrics panel
+        if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::M)) {
+            self.show_metrics_panel = !self.show_metrics_panel;
+        }
+        
+        // Cmd+T: Toggle timeline panel
+        if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::T)) {
+            self.show_timeline_panel = !self.show_timeline_panel;
+        }
+        
+        // Cmd+M: Toggle multimodal panel  
+        if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::O)) {
+            self.show_modality_panel = !self.show_modality_panel;
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -104,6 +162,29 @@ impl eframe::App for LaoApp {
 
                     // 1. Top Bar / Workflow Management
                     toolbar::show(ui, &self.state);
+                    
+                    // Show metrics panel if toggled
+                    if self.show_metrics_panel {
+                        ui.add_space(10.0);
+                        crate::metrics::show_metrics_panel(ui, &self.metrics);
+                        ui.add_space(10.0);
+                    }
+                    
+                    // Show timeline panel if toggled
+                    if self.show_timeline_panel {
+                        ui.add_space(10.0);
+                        let steps: Vec<_> = self.metrics.step_metrics.clone();
+                        crate::timeline::show_timeline(ui, &steps, &mut self.timeline_state);
+                        crate::timeline::show_timeline_legend(ui);
+                        ui.add_space(10.0);
+                    }
+                    
+                    // Show multimodal panel if toggled
+                    if self.show_modality_panel {
+                        ui.add_space(10.0);
+                        crate::multimodal::show_modality_flow(ui, &self.modality_info);
+                        ui.add_space(10.0);
+                    }
                     
                     // Show settings window if requested (must be outside ScrollArea)
                     {

@@ -1,0 +1,12 @@
+workflow: "Loop Example"
+steps:
+  - run: EchoPlugin
+    input: "Processing array"
+    for_each:
+      items:
+        - "file1.txt"
+        - "file2.txt"
+        - "file3.txt"
+      var: "filename"
+      collect_results: true
+      max_parallel: 2

@@ -43,6 +43,9 @@ fn test_workflow_execution_basic() {
             condition: None,
             on_success: None,
             on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
         }],
     };
     let path = "temp_basic_execution.yaml";
@@ -94,6 +97,9 @@ fn test_workflow_execution_chain() {
                 condition: None,
                 on_success: None,
                 on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
             },
             WorkflowStep {
                 run: "EchoPlugin".to_string(),
@@ -106,6 +112,9 @@ fn test_workflow_execution_chain() {
                 condition: None,
                 on_success: None,
                 on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
             },
             WorkflowStep {
                 run: "EchoPlugin".to_string(),
@@ -118,6 +127,9 @@ fn test_workflow_execution_chain() {
                 condition: None,
                 on_success: None,
                 on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
             },
         ],
     };
@@ -160,6 +172,9 @@ fn test_workflow_execution_parallel() {
                 condition: None,
                 on_success: None,
                 on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
             },
             WorkflowStep {
                 run: "EchoPlugin".to_string(),
@@ -172,6 +187,9 @@ fn test_workflow_execution_parallel() {
                 condition: None,
                 on_success: None,
                 on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
             },
             WorkflowStep {
                 run: "EchoPlugin".to_string(),
@@ -184,6 +202,9 @@ fn test_workflow_execution_parallel() {
                 condition: None,
                 on_success: None,
                 on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
             },
         ],
     };
@@ -231,6 +252,9 @@ fn test_workflow_execution_with_callback() {
                 condition: None,
                 on_success: None,
                 on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
             },
         ],
     };
@@ -286,6 +310,9 @@ fn test_workflow_execution_fan_out_fan_in() {
                 condition: None,
                 on_success: None,
                 on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
             },
             WorkflowStep {
                 run: "EchoPlugin".to_string(),
@@ -298,6 +325,9 @@ fn test_workflow_execution_fan_out_fan_in() {
                 condition: None,
                 on_success: None,
                 on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
             },
             WorkflowStep {
                 run: "EchoPlugin".to_string(),
@@ -310,6 +340,9 @@ fn test_workflow_execution_fan_out_fan_in() {
                 condition: None,
                 on_success: None,
                 on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
             },
             WorkflowStep {
                 run: "EchoPlugin".to_string(),
@@ -322,6 +355,9 @@ fn test_workflow_execution_fan_out_fan_in() {
                 condition: None,
                 on_success: None,
                 on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
             },
         ],
     };

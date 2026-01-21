@@ -2,6 +2,9 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process;
 
+#[cfg(target_os = "macos")]
+mod macos_ui_integration;
+
 #[derive(Parser)]
 #[command(name = "lao")]
 #[command(about = "LAO - Local AI Orchestrator")]
@@ -193,6 +196,18 @@ enum DevCommands {
         #[arg(short, long)]
         integration: bool,
     },
+    
+    /// macOS native features (menu bar, Spotlight, Quick Look, notifications)
+    #[cfg(target_os = "macos")]
+    MacOS {
+        /// Feature to demonstrate
+        #[arg(value_name = "FEATURE")]
+        feature: String,
+        
+        /// Optional file or query parameter
+        #[arg(short, long)]
+        param: Option<String>,
+    },
 }
 
 fn main() {
@@ -331,6 +346,36 @@ fn main() {
                         println!("Including integration tests");
                     }
                     // TODO: Implement test running
+                }
+                
+                #[cfg(target_os = "macos")]
+                DevCommands::MacOS { feature, param } => {
+                    match feature.as_str() {
+                        "init" => {
+                            let workflows_path = param.as_deref().unwrap_or("./workflows");
+                            macos_ui_integration::init_macos_features("LAO", "1.0.0", std::path::Path::new(workflows_path));
+                        }
+                        "shortcuts" => {
+                            macos_ui_integration::display_shortcuts();
+                        }
+                        "notify" => {
+                            macos_ui_integration::demo_notifications();
+                        }
+                        "spotlight" => {
+                            let query = param.as_deref().unwrap_or("workflow");
+                            let _results = macos_ui_integration::demo_spotlight_search(query);
+                        }
+                        "quicklook" => {
+                            if let Some(file_path) = param {
+                                let _ = macos_ui_integration::demo_quick_look(std::path::Path::new(&file_path));
+                            } else {
+                                eprintln!("Error: --param <FILE> required for quicklook");
+                            }
+                        }
+                        _ => {
+                            eprintln!("Unknown macOS feature: {}. Try: init, shortcuts, notify, spotlight, quicklook", feature);
+                        }
+                    }
                 }
             }
         }

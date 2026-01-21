@@ -1,0 +1,40 @@
+workflow: multimodal_combined_analysis
+description: "Demonstrates multimodal workflow with audio transcription, summarization, and insight extraction"
+
+steps:
+  - run: WhisperPlugin
+    input_modality: audio
+    output_modality: text
+    params:
+      model: "base"
+      language: "auto"
+    cache_key: "whisper_transcription"
+
+  - run: SummarizerPlugin
+    input_from: step1
+    input_modality: text
+    output_modality: text
+    params:
+      max_length: 200
+      style: "bullet_points"
+    depends_on:
+      - step1
+
+  - run: PromptDispatcherPlugin
+    input_from: step2
+    input_modality: text
+    output_modality: structured
+    params:
+      prompt: "Extract action items, key topics, and sentiment. Return as JSON."
+      temperature: 0.3
+    depends_on:
+      - step2
+
+  - run: EchoPlugin
+    input_from: step3
+    input_modality: structured
+    output_modality: text
+    params:
+      format: "formatted"
+    depends_on:
+      - step3

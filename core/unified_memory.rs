@@ -2,7 +2,7 @@
 
 #[cfg(target_os = "macos")]
 pub mod unified_memory {
-    use std::alloc::{GlobalAlloc, Layout};
+    use std::alloc::Layout;
     use std::ptr::NonNull;
 
     /// Unified memory buffer for CPU-GPU sharing without copies

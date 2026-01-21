@@ -11,6 +11,7 @@ use std::{thread, time::Duration};
 pub mod apple_silicon;
 pub mod core_scheduler;
 pub mod cross_platform;
+pub mod macos_integrations;
 pub mod mps_shaders;
 pub mod plugin_dev_tools;
 pub mod plugin_manager;
@@ -52,12 +53,119 @@ pub struct WorkflowStep {
     pub on_success: Option<Vec<String>>, // Step IDs to execute on success
     #[serde(default)]
     pub on_failure: Option<Vec<String>>, // Step IDs to execute on failure
+    #[serde(default)]
+    pub for_each: Option<LoopConfig>, // Loop iteration support
+    #[serde(default)]
+    pub input_modality: Option<Modality>, // Input modality type
+    #[serde(default)]
+    pub output_modality: Option<Modality>, // Output modality type
+}
+
+/// Loop/iteration configuration for processing arrays
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct LoopConfig {
+    /// Array to iterate over (can be reference to previous step output or inline array)
+    pub items: LoopItems,
+    /// Variable name for current item (default: "item")
+    #[serde(default = "default_loop_var")]
+    pub var: String,
+    /// Whether to collect results into an array (default: true)
+    #[serde(default = "default_collect_results")]
+    pub collect_results: bool,
+    /// Maximum parallel iterations (default: 4)
+    #[serde(default = "default_max_parallel")]
+    pub max_parallel: usize,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+#[serde(untagged)]
+pub enum LoopItems {
+    /// Reference to previous step output (e.g., "step1.output")
+    Reference(String),
+    /// Inline array of items
+    Array(Vec<serde_yaml::Value>),
+}
+
+fn default_loop_var() -> String {
+    "item".to_string()
+}
+
+fn default_collect_results() -> bool {
+    true
+}
+
+fn default_max_parallel() -> usize {
+    4
+}
+
+/// Modality types for multimodal workflow support
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Modality {
+    /// Plain text
+    Text,
+    /// Audio/speech data
+    Audio,
+    /// Image data
+    Image,
+    /// Video data
+    Video,
+    /// Structured data (JSON/YAML)
+    Structured,
+    /// Binary data
+    Binary,
+    /// Mixed/unknown modality
+    Mixed,
+}
+
+impl Modality {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Modality::Text => "text",
+            Modality::Audio => "audio",
+            Modality::Image => "image",
+            Modality::Video => "video",
+            Modality::Structured => "structured",
+            Modality::Binary => "binary",
+            Modality::Mixed => "mixed",
+        }
+    }
+
+    pub fn from_file_extension(ext: &str) -> Option<Modality> {
+        match ext.to_lowercase().as_str() {
+            "txt" | "json" | "yaml" | "yml" | "csv" => Some(Modality::Text),
+            "mp3" | "wav" | "ogg" | "flac" | "aac" => Some(Modality::Audio),
+            "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" => Some(Modality::Image),
+            "mp4" | "avi" | "mov" | "mkv" | "webm" => Some(Modality::Video),
+            _ => None,
+        }
+    }
+
+    pub fn from_mime_type(mime: &str) -> Option<Modality> {
+        let base = mime.split(';').next().unwrap_or(mime);
+        if base.starts_with("text/") {
+            Some(Modality::Text)
+        } else if base.starts_with("audio/") {
+            Some(Modality::Audio)
+        } else if base.starts_with("image/") {
+            Some(Modality::Image)
+        } else if base.starts_with("video/") {
+            Some(Modality::Video)
+        } else if base.contains("json") || base.contains("yaml") {
+            Some(Modality::Structured)
+        } else if base.starts_with("application/octet-stream") {
+            Some(Modality::Binary)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct StepCondition {
     pub condition_type: ConditionType,
     pub field: String, // Which field to evaluate (output, status, error)
+
     pub operator: ConditionOperator,
     pub value: String, // Value to compare against
 }
@@ -753,6 +861,96 @@ where
     Ok(logs)
 }
 
+/// Execute a step with loop/iteration support
+/// Returns Vec of outputs if collecting results, or last output if not
+fn execute_with_loop(
+    step: &WorkflowStep,
+    loop_config: &LoopConfig,
+    base_params: &serde_yaml::Value,
+    outputs: &HashMap<String, String>,
+    registry: &std::sync::Arc<std::sync::Mutex<PluginRegistry>>,
+) -> Result<Vec<String>, String> {
+    // Resolve items to iterate over
+    let items = match &loop_config.items {
+        LoopItems::Array(arr) => arr.clone(),
+        LoopItems::Reference(ref_path) => {
+            // Parse reference like "step1.output" and get from outputs
+            if let Some(output_str) = outputs.get(ref_path) {
+                // Try to parse as JSON array
+                serde_json::from_str::<Vec<serde_yaml::Value>>(output_str)
+                    .map_err(|e| format!("Failed to parse loop items from {}: {}", ref_path, e))?
+            } else {
+                return Err(format!("Loop reference '{}' not found in outputs", ref_path));
+            }
+        }
+    };
+
+    let mut results = Vec::new();
+    let chunk_size = loop_config.max_parallel;
+
+    // Process items in chunks for parallel execution
+    for chunk in items.chunks(chunk_size) {
+        let mut handles = Vec::new();
+
+        for item in chunk {
+            let step_clone = step.clone();
+            let mut params = base_params.clone();
+            let registry_clone = registry.clone();
+            let item_clone = item.clone();
+            let var_name = loop_config.var.clone();
+
+            let handle = std::thread::spawn(move || {
+                // Inject loop variable into params
+                if let Some(mapping) = params.as_mapping_mut() {
+                    mapping.insert(
+                        serde_yaml::Value::String(var_name),
+                        item_clone,
+                    );
+                }
+
+                // Execute plugin
+                let plugin_input = build_plugin_input(&params);
+                let reg_guard = registry_clone.lock().unwrap();
+                let plugin_opt = reg_guard.get(&step_clone.run);
+
+                if let Some(plugin) = plugin_opt {
+                    let result = unsafe { ((*plugin.vtable).run)(&plugin_input) };
+                    let output_str = unsafe {
+                        std::ffi::CStr::from_ptr(result.text)
+                            .to_string_lossy()
+                            .to_string()
+                    };
+                    unsafe { ((*plugin.vtable).free_output)(result) };
+                    Ok(output_str)
+                } else {
+                    Err(format!("Plugin '{}' not found", step_clone.run))
+                }
+            });
+
+            handles.push(handle);
+        }
+
+        // Collect results from this chunk
+        for handle in handles {
+            match handle.join() {
+                Ok(Ok(output)) => {
+                    if loop_config.collect_results {
+                        results.push(output);
+                    }
+                }
+                Ok(Err(e)) => return Err(e),
+                Err(_) => return Err("Thread panicked during loop execution".to_string()),
+            }
+        }
+    }
+
+    if loop_config.collect_results {
+        Ok(results)
+    } else {
+        Ok(vec![results.last().cloned().unwrap_or_default()])
+    }
+}
+
 // Group nodes by execution level (nodes at same level can run in parallel)
 fn group_by_execution_levels(dag: &[DagNode]) -> Vec<Vec<String>> {
     let mut levels = Vec::new();
@@ -912,6 +1110,87 @@ where
                                 );
                                 params = serde_yaml::Value::Mapping(new_mapping);
                             }
+                        }
+                    }
+                }
+                
+                // Check if this step has loop configuration
+                if let Some(loop_config) = &step.for_each {
+                    let outputs_guard = outputs_clone.lock().unwrap();
+                    let outputs_map: HashMap<String, String> = outputs_guard.clone();
+                    drop(outputs_guard);
+                    
+                    let _ = event_tx_clone.send(StepEvent {
+                        step: step_idx,
+                        step_id: node_id_clone.clone(),
+                        runner: step.run.clone(),
+                        status: "running".to_string(),
+                        attempt: 1,
+                        message: Some("Executing loop".to_string()),
+                        output: None,
+                        error: None,
+                    });
+                    
+                    match execute_with_loop(&step, loop_config, &params, &outputs_map, &registry_clone) {
+                        Ok(loop_results) => {
+                            let output_str = serde_json::to_string(&loop_results).unwrap_or_else(|_| "[]".to_string());
+                            
+                            let _ = event_tx_clone.send(StepEvent {
+                                step: step_idx,
+                                step_id: node_id_clone.clone(),
+                                runner: step.run.clone(),
+                                status: "success".to_string(),
+                                attempt: 1,
+                                message: Some(format!("Loop completed: {} iterations", loop_results.len())),
+                                output: Some(output_str.clone()),
+                                error: None,
+                            });
+                            
+                            let mut outputs_guard = outputs_clone.lock().unwrap();
+                            outputs_guard.insert(node_id_clone.clone(), output_str.clone());
+                            drop(outputs_guard);
+                            
+                            let mut logs_guard = logs_clone.lock().unwrap();
+                            logs_guard.push(StepLog {
+                                step: step_idx,
+                                step_id: node_id_clone,
+                                runner: step.run.clone(),
+                                input: params,
+                                output: Some(output_str),
+                                error: None,
+                                attempt: 1,
+                                input_type: None,
+                                output_type: None,
+                                validation: Some(format!("loop:{} iterations", loop_results.len())),
+                            });
+                            return;
+                        }
+                        Err(e) => {
+                            let _ = event_tx_clone.send(StepEvent {
+                                step: step_idx,
+                                step_id: node_id_clone.clone(),
+                                runner: step.run.clone(),
+                                status: "error".to_string(),
+                                attempt: 1,
+                                message: None,
+                                output: None,
+                                error: Some(e.clone()),
+                            });
+                            
+                            let mut logs_guard = logs_clone.lock().unwrap();
+                            logs_guard.push(StepLog {
+                                step: step_idx,
+                                step_id: node_id_clone,
+                                runner: step.run.clone(),
+                                input: params,
+                                output: None,
+                                error: Some(e),
+                                attempt: 1,
+                                input_type: None,
+                                output_type: None,
+                                validation: None,
+                            });
+                            return;
                         }
                     }
                 }
@@ -1310,6 +1589,9 @@ mod tests {
             condition: None,
             on_success: None,
             on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
         }];
 
         let dag = build_dag(&steps).unwrap();
@@ -1332,6 +1614,9 @@ mod tests {
                 condition: None,
                 on_success: None,
                 on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
             },
             WorkflowStep {
                 run: "Step2".to_string(),
@@ -1344,6 +1629,9 @@ mod tests {
                 condition: None,
                 on_success: None,
                 on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
             },
         ];
 
@@ -1367,6 +1655,9 @@ mod tests {
                 condition: None,
                 on_success: None,
                 on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
             },
             WorkflowStep {
                 run: "B".to_string(),
@@ -1379,6 +1670,9 @@ mod tests {
                 condition: None,
                 on_success: None,
                 on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
             },
         ];
 
@@ -1401,6 +1695,9 @@ mod tests {
                 condition: None,
                 on_success: None,
                 on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
             },
             WorkflowStep {
                 run: "B".to_string(),
@@ -1413,6 +1710,9 @@ mod tests {
                 condition: None,
                 on_success: None,
                 on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
             },
         ];
 

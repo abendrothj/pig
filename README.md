@@ -402,15 +402,61 @@ let (inference_threads, background_threads) = core_scheduler::get_thread_pool_si
 
 ### Full Optimization Roadmap
 
-For complete details on all optimization phases (Phase 1-3), including:
-- Power management API
-- Core affinity scheduling
-- Unified memory buffers
-- Metal Performance Shaders
-- Indirect command buffers
-- Advanced CoreML integration
+For complete details on all optimization phases:
+- **Phase 1**: Power management, P-core/E-core scheduling
+- **Phase 2**: Unified memory, Metal Performance Shaders
+- **Phase 3**: Neural Engine, macOS UI/UX (menu bar, Spotlight, Quick Look, notifications)
 
-See: **[docs/SILICON_IMPROVEMENTS.md](docs/SILICON_IMPROVEMENTS.md)**
+See: **[docs/SILICON_IMPROVEMENTS.md](docs/SILICON_IMPROVEMENTS.md)** and **[docs/PHASE_3_MACOS_UI.md](docs/PHASE_3_MACOS_UI.md)**
+
+### macOS Native Features (Phase 3)
+
+LAO includes native macOS UI/UX integration:
+
+**Menu Bar**:
+- Standard File, Edit, View, Help menus
+- Native keyboard shortcuts (Cmd+N, Cmd+O, Cmd+R, etc.)
+- Preferences and app menu
+
+**Spotlight Search**:
+- Index workflows and plugins
+- Full-text search across metadata
+- Recent items tracking
+- ```bash
+  lao dev macos spotlight "audio"
+  # 🔍 Spotlight Results for 'audio': 3 items
+  ```
+
+**Quick Look Preview**:
+- Preview YAML workflows
+- Preview markdown documentation
+- Native file preview integration
+- ```bash
+  lao dev macos quicklook --param ./workflows/test.yaml
+  ```
+
+**Notification Center**:
+- Workflow completion notifications
+- Error notifications
+- Background task updates
+- ```bash
+  lao dev macos notify
+  ```
+
+**Keyboard Shortcuts**:
+- ```bash
+  lao dev macos shortcuts
+  # 📋 LAO Keyboard Shortcuts:
+  #   New Workflow:        Cmd+N
+  #   Open Workflow:       Cmd+O
+  #   Run Workflow:        Cmd+R
+  ```
+
+**Initialize All Features**:
+```bash
+# Set up menu bar, Spotlight indexing, notifications
+lao dev macos init --param ./workflows
+```
 
 ### Troubleshooting on Apple Silicon
 

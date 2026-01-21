@@ -68,6 +68,9 @@ fn test_workflow_execution_success() {
             condition: None,
             on_success: None,
             on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
         }],
     };
     let path = "temp_workflow.yaml";
@@ -113,6 +116,9 @@ fn test_workflow_plugin_missing() {
             condition: None,
             on_success: None,
             on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
         }],
     };
     let dag = build_dag(&workflow.steps).unwrap();
@@ -138,6 +144,9 @@ fn test_workflow_invalid_step() {
             condition: None,
             on_success: None,
             on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
         }],
     };
     let dag = build_dag(&workflow.steps).unwrap();
@@ -281,6 +290,9 @@ fn test_caching_and_retries() {
             condition: None,
             on_success: None,
             on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
         }],
     };
     let path = "temp_cache.yaml";
@@ -336,6 +348,9 @@ fn test_log_output() {
             condition: None,
             on_success: None,
             on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
         }],
     };
     let path = "temp_log.yaml";
@@ -383,6 +398,9 @@ fn test_multi_plugin_workflow() {
                 condition: None,
                 on_success: None,
                 on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
             },
             WorkflowStep {
                 run: "SummarizerPlugin".to_string(),
@@ -395,6 +413,9 @@ fn test_multi_plugin_workflow() {
                 condition: None,
                 on_success: None,
                 on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
             },
         ],
     };
@@ -433,6 +454,9 @@ fn test_circular_dependency() {
                 condition: None,
                 on_success: None,
                 on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
             },
             WorkflowStep {
                 run: "SummarizerPlugin".to_string(),
@@ -445,6 +469,9 @@ fn test_circular_dependency() {
                 condition: None,
                 on_success: None,
                 on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
             },
         ],
     };
@@ -484,6 +511,9 @@ fn test_plugin_type_mismatch() {
             condition: None,
             on_success: None,
             on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
         }],
     };
     let path = "temp_type_mismatch.yaml";
@@ -523,6 +553,9 @@ fn test_conditional_execution() {
                 condition: None,
                 on_success: None,
                 on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
             },
             // Step 2: Should run (OutputContains "trigger")
             WorkflowStep {
@@ -541,6 +574,9 @@ fn test_conditional_execution() {
                 }),
                 on_success: None,
                 on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
             },
             // Step 3: Should skip (OutputContains "foobar")
             WorkflowStep {
@@ -559,6 +595,9 @@ fn test_conditional_execution() {
                 }),
                 on_success: None,
                 on_failure: None,
+                for_each: None,
+                input_modality: None,
+                output_modality: None,
             },
         ],
     };

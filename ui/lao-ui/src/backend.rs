@@ -1052,7 +1052,7 @@ pub fn save_workflow_yaml(graph: &WorkflowGraph, filename: &str) -> Result<(), S
 
                 lao_orchestrator_core::WorkflowStep {
                     run: node.run.clone(),
-                    params: serde_yaml::Value::Null, // Could be enhanced to support parameters
+                    params: serde_yaml::Value::Null,
                     retries: None,
                     retry_delay: None,
                     cache_key: None,
@@ -1061,6 +1061,9 @@ pub fn save_workflow_yaml(graph: &WorkflowGraph, filename: &str) -> Result<(), S
                     condition: None,
                     on_success: None,
                     on_failure: None,
+                    for_each: None,
+                    input_modality: None, // Could be inferred from attached files
+                    output_modality: None, // Could be specified by user
                 }
             })
             .collect(),
