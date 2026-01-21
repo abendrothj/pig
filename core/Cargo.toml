@@ -25,6 +25,7 @@ uuid = { version = "1.0", features = ["v4"] }
 anyhow = "1.0"
 log = "0.4"
 toml = "0.8"
+libc = "0.2"
 
 [[bin]]
 name = "test_runner"

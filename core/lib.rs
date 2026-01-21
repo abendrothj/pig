@@ -9,12 +9,16 @@ use std::time::Instant;
 use std::{thread, time::Duration};
 
 pub mod apple_silicon;
+pub mod core_scheduler;
 pub mod cross_platform;
+pub mod mps_shaders;
 pub mod plugin_dev_tools;
 pub mod plugin_manager;
 pub mod plugins;
+pub mod power_management;
 pub mod scheduler;
 pub mod state_manager;
+pub mod unified_memory;
 pub mod workflow_state;
 
 use lao_plugin_api::{PluginInputType, PluginOutputType};
