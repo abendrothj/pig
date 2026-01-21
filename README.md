@@ -41,11 +41,80 @@ LAO is a cross-platform desktop tool for chaining local AI models and plugins in
 - [x] **Node/edge editing** in UI (drag, connect, edit, delete)
 - [x] **Cross-platform support** (Linux, macOS, Windows)
 - [x] **Conditional/branching steps** (output-based conditions)
-- [ ] **Multi-modal input** (files, voice, images, video)
+- [x] **Multimodal processing** (audio, images, video, text with auto-detection)
+- [x] **Loop/iteration support** (batch processing with parallel execution)
+- [x] **Undo/redo system** (full command history for graph editing)
+- [x] **Metrics dashboard** (real-time execution monitoring)
+- [x] **File attachments** (drag-drop with automatic modality detection)
+- [x] **Timeline visualization** (Gantt chart for workflow execution)
 - [x] **Automated packaging** (deb, rpm, AppImage, dmg, msi, zip)
 - [x] **CI/CD pipeline** (GitHub Actions, automated releases)
 - [ ] Plugin explainability (`lao explain plugin <name>`)
-- [ ] Plugin marketplace/discovery
+- [🎨 Multimodal Support
+
+LAO fully supports processing **images, audio, video, and mixed media** with automatic modality detection:
+
+### 7 Supported Modalities
+- 🎵 **Audio** - `.mp3`, `.wav`, `.ogg` (transcription, speech analysis)
+- 🖼️ **Image** - `.png`, `.jpg`, `.gif` (OCR, object detection, classification)
+- 🎬 **Video** - `.mp4`, `.avi`, `.mov` (frame extraction, scene analysis)
+- 📄 **Text** - `.txt`, `.md`, `.json` (NLP, summarization)
+- 📦 **Binary** - `.pdf`, `.docx` (document parsing)
+- 🗂️ **Structured** - `.json`, `.yaml` (data processing)
+- ❓ **Unknown** - Fallback handling
+
+### Example: Batch Image Processing
+```yaml
+workflow: "batch_images"
+steps:
+  - id: process_photos
+    run: MultimodalPlugin
+    input:
+      for_each:
+        items: ["photo1.jpg", "photo2.png", "photo3.gif"]
+        var: "photo"
+        max_parallel: 3  # Process 3 images at once
+      file: "${photo}"
+    input_modality: Image
+    output_modality: Structured
+```
+
+### Example: Video Frame Analysis
+```yaml
+workflow: "video_analysis"
+steps:
+  - id: extract_frames
+    run: MultimodalPlugin
+    input:
+      file: "video.mp4"
+      task: "extract_frames"
+      fps: 1  # 1 frame per second
+    input_modality: Video
+    output_modality: Image
+    
+  - id: analyze_frames
+    run: MultimodalPlugin
+    input:
+      for_each:
+        items: "${extract_frames.frames}"
+        var: "frame"
+        max_parallel: 4
+      file: "${frame}"
+    input_modality: Image
+    output_modality: Structured
+```
+
+### UI Features
+- **Cmd+O**: Toggle modality flow visualization
+- **Automatic detection** from file extensions and MIME types
+- **Drag-drop file attachments** with modality indicators
+- **Visual modality flow** showing data transformations
+
+See **[docs/MULTIMODAL_GUIDE.md](docs/MULTIMODAL_GUIDE.md)** for complete examples and API reference.
+
+---
+
+##  ] Plugin marketplace/discovery
 - [ ] Live workflow status/logs in UI
 
 ---
@@ -122,7 +191,50 @@ cd ../WhisperPlugin && cargo build --release
 - **Second click**: Select the target node (where data goes to)
 - After connecting, click **"📐 Auto-Layout"** to automatically arrange nodes hierarchically by execution level
 - The connection is created automatically
-- Click **"🔗 Connect"** again to exit connection mode
+- Click **"🔗 Connect"** again to exit conn
+
+### Keyboard Shortcuts
+
+LAO includes comprehensive keyboard shortcuts for efficient workflow editing:
+
+| Shortcut | Action | Feature |
+|----------|--------|---------|
+| **Cmd+Z** | Undo last action | Undo/Redo System |
+| **Cmd+Shift+Z** | Redo action | Undo/Redo System |
+| **Cmd+M** | Toggle metrics dashboard | Real-time Metrics |
+| **Cmd+T** | Toggle timeline view | Gantt Chart |
+| **Cmd+O** | Toggle modality flow | Multimodal Visualization |
+
+### Advanced Features
+
+#### Loop/Iteration Support
+Process multiple items in parallel with built-in loop support:
+```yaml
+steps:
+  - id: process_files
+    run: EchoPlugin
+    input:
+      for_each:
+        items: ["file1.txt", "file2.txt", "file3.txt"]
+        var: "filename"
+        collect_results: true
+        max_parallel: 2  # Process 2 files concurrently
+      message: "Processing ${filename}"
+```
+
+#### Metrics Dashboard
+Press **Cmd+M** to view real-time execution metrics:
+- Execution time per step
+- Memory usage tracking
+- Throughput (items/second)
+- Error rates and retry statistics
+
+#### Timeline Visualization
+Press **Cmd+T** to view execution timeline:
+- Gantt chart showing step durations
+- Parallel execution visualization
+- Color-coded step status
+- Zoom and pan controlsection mode
 
 #### Step 4: Set Primary Input (for nodes with multiple inputs)
 - Click on a node that has multiple incoming connections
@@ -460,15 +572,73 @@ lao dev macos init --param ./workflows
 
 ### Troubleshooting on Apple Silicon
 
+
+## 🧪 Testing
+
+LAO includes comprehensive test coverage across all features:
+
+### Test Statistics
+- **99 total tests** ✅ (all passing)
+- **21 feature unit tests** - Loops, modality detection, workflows
+- **7 integration tests** - Multi-feature combinations
+- **71 existing tests** - Core library, DAG, plugins
+
+### Run Tests
+```bash
+# Run all tests
+cargo test -p lao-orchestrator-core
+
+# Run specific test suites
+cargo test -p lao-orchestrator-core --test features_test
+cargo test -p lao-orchestrator-core --test integration_test
+
+# Validate workflows
+cargo run --bin lao-cli validate workflows/image_analysis.yaml
+```
+
+### Example Workflows
+
+LAO includes ready-to-run example workflows:
+
+**Multimodal Processing**:
+- `workflows/image_analysis.yaml` - OCR + object detection + AI descriptions
+- `workflows/image_batch_processing.yaml` - Batch process 5 images in parallel
+- `workflows/video_to_images.yaml` - Extract video frames and analyze scenes
+- `workflows/mixed_media_processing.yaml` - Process multiple media types together
+
+**Standard Workflows**:
+- `workflows/test.yaml` - Simple echo test
+- `workflows/test_loop.yaml` - Loop execution example
+- `workflows/multimodal_analysis.yaml` - Audio transcription with modality detection
+- `workflows/parallel_data_processing.yaml` - Parallel execution pattern
+
+**Run Examples**:
+```bash
+cd core
+
+# Run simple test
+../target/release/lao-cli run ../workflows/test.yaml
+
+# Run loop workflow
+../target/release/lao-cli run ../workflows/test_loop.yaml
+
+# Validate image workflow
+../target/release/lao-cli validate ../workflows/image_analysis.yaml
+```
+
+See **[TEST_REPORT.md](TEST_REPORT.md)** for detailed test coverage and results.
 **"Rosetta 2 Warning"**: You're using an x86_64 binary on Apple Silicon.
 ```bash
 # Use native build instead
 ./scripts/build-apple-silicon.sh
-```
-
-**"Neural Engine not available"**: Check chip model:
-```bash
-sysctl machdep.cpu.brand_string
+``**Architecture**: `docs/architecture.md` - Core system design
+- **Plugins**: `docs/plugins.md` - Plugin development guide
+- **Workflows**: `docs/workflows.md` - Workflow syntax reference
+- **CLI**: `docs/cli.md` - Command-line interface
+- **Observability**: `docs/observability.md` - Logging and monitoring
+- **Multimodal Guide**: `docs/MULTIMODAL_GUIDE.md` - Image/video/audio processing
+- **Test Report**: `TEST_REPORT.md` - Comprehensive test coverage (99 tests)
+- **Integration Status**: `INTEGRATION_STATUS.md` - Feature integration details
 # Should show M1, M2, M3, or M4
 ```
 
