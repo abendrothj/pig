@@ -1,8 +1,41 @@
 [workspace]
+resolver = "2"
 members = [
     "core",
     "cli",
     "lao_plugin_api",
+    "lao_inference",
     "plugins/*",
     "ui/lao-ui"
-] 
+]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+authors = ["Jake Abendroth <contact@jakea.net>"]
+license = "MIT"
+
+[workspace.dependencies]
+# Core dependencies
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+log = "0.4"
+env_logger = "0.11"
+once_cell = "1.19"
+tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
+
+# ML/Inference dependencies
+candle-core = "0.8"
+candle-nn = "0.8"
+candle-transformers = "0.8"
+tokenizers = "0.20"
+hf-hub = "0.3"
+llama-cpp-2 = "0.1"
+
+# CUDA dependencies
+cudarc = { version = "0.12", features = ["cuda-12050"] }
+half = "2.4"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }

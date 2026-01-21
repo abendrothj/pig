@@ -1,0 +1,31 @@
+[package]
+name = "lao_inference"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Shared inference utilities for LAO plugins"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+once_cell = { workspace = true }
+
+# Optional ML backends
+candle-core = { workspace = true, optional = true }
+candle-nn = { workspace = true, optional = true }
+candle-transformers = { workspace = true, optional = true }
+tokenizers = { workspace = true, optional = true }
+hf-hub = { workspace = true, optional = true }
+llama-cpp-2 = { workspace = true, optional = true }
+cudarc = { workspace = true, optional = true }
+half = { workspace = true, optional = true }
+
+[features]
+default = []
+candle = ["candle-core", "candle-nn", "candle-transformers", "tokenizers", "hf-hub"]
+llama-cpp = ["llama-cpp-2"]
+cuda = ["cudarc", "half"]
+all = ["candle", "llama-cpp", "cuda"]

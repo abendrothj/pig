@@ -7,6 +7,8 @@ use std::fs;
 use std::process::Command;
 use std::time::Instant;
 use std::{thread, time::Duration};
+
+pub mod apple_silicon;
 pub mod cross_platform;
 pub mod plugin_dev_tools;
 pub mod plugin_manager;

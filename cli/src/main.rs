@@ -196,6 +196,10 @@ enum DevCommands {
 }
 
 fn main() {
+    // Check for Rosetta 2 on macOS and warn user
+    #[cfg(target_os = "macos")]
+    lao_orchestrator_core::apple_silicon::warn_if_rosetta();
+    
     let cli = Cli::parse();
 
     match &cli.command {
