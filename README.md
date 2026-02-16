@@ -50,20 +50,27 @@ LAO is a cross-platform desktop tool for chaining local AI models and plugins in
 - [x] **Automated packaging** (deb, rpm, AppImage, dmg, msi, zip)
 - [x] **CI/CD pipeline** (GitHub Actions, automated releases)
 - [ ] Plugin explainability (`lao explain plugin <name>`)
-- [🎨 Multimodal Support
+- [ ] Plugin marketplace/discovery
+- [ ] Live workflow status/logs in UI
+
+---
+
+## Multimodal Support
 
 LAO fully supports processing **images, audio, video, and mixed media** with automatic modality detection:
 
 ### 7 Supported Modalities
-- 🎵 **Audio** - `.mp3`, `.wav`, `.ogg` (transcription, speech analysis)
-- 🖼️ **Image** - `.png`, `.jpg`, `.gif` (OCR, object detection, classification)
-- 🎬 **Video** - `.mp4`, `.avi`, `.mov` (frame extraction, scene analysis)
-- 📄 **Text** - `.txt`, `.md`, `.json` (NLP, summarization)
-- 📦 **Binary** - `.pdf`, `.docx` (document parsing)
-- 🗂️ **Structured** - `.json`, `.yaml` (data processing)
-- ❓ **Unknown** - Fallback handling
+
+- **Audio** - `.mp3`, `.wav`, `.ogg` (transcription, speech analysis)
+- **Image** - `.png`, `.jpg`, `.gif` (OCR, object detection, classification)
+- **Video** - `.mp4`, `.avi`, `.mov` (frame extraction, scene analysis)
+- **Text** - `.txt`, `.md`, `.json` (NLP, summarization)
+- **Binary** - `.pdf`, `.docx` (document parsing)
+- **Structured** - `.json`, `.yaml` (data processing)
+- **Unknown** - Fallback handling
 
 ### Example: Batch Image Processing
+
 ```yaml
 workflow: "batch_images"
 steps:
@@ -80,6 +87,7 @@ steps:
 ```
 
 ### Example: Video Frame Analysis
+
 ```yaml
 workflow: "video_analysis"
 steps:
@@ -91,7 +99,7 @@ steps:
       fps: 1  # 1 frame per second
     input_modality: Video
     output_modality: Image
-    
+
   - id: analyze_frames
     run: MultimodalPlugin
     input:
@@ -105,17 +113,13 @@ steps:
 ```
 
 ### UI Features
+
 - **Cmd+O**: Toggle modality flow visualization
 - **Automatic detection** from file extensions and MIME types
 - **Drag-drop file attachments** with modality indicators
 - **Visual modality flow** showing data transformations
 
 See **[docs/MULTIMODAL_GUIDE.md](docs/MULTIMODAL_GUIDE.md)** for complete examples and API reference.
-
----
-
-##  ] Plugin marketplace/discovery
-- [ ] Live workflow status/logs in UI
 
 ---
 
@@ -191,7 +195,7 @@ cd ../WhisperPlugin && cargo build --release
 - **Second click**: Select the target node (where data goes to)
 - After connecting, click **"📐 Auto-Layout"** to automatically arrange nodes hierarchically by execution level
 - The connection is created automatically
-- Click **"🔗 Connect"** again to exit conn
+- Click **"🔗 Connect"** again to exit connection mode
 
 ### Keyboard Shortcuts
 
@@ -234,7 +238,7 @@ Press **Cmd+T** to view execution timeline:
 - Gantt chart showing step durations
 - Parallel execution visualization
 - Color-coded step status
-- Zoom and pan controlsection mode
+- Zoom and pan controls
 
 #### Step 4: Set Primary Input (for nodes with multiple inputs)
 - Click on a node that has multiple incoming connections
@@ -519,61 +523,38 @@ For complete details on all optimization phases:
 - **Phase 2**: Unified memory, Metal Performance Shaders
 - **Phase 3**: Neural Engine, macOS UI/UX (menu bar, Spotlight, Quick Look, notifications)
 
-See: **[docs/SILICON_IMPROVEMENTS.md](docs/SILICON_IMPROVEMENTS.md)** and **[docs/PHASE_3_MACOS_UI.md](docs/PHASE_3_MACOS_UI.md)**
+See: **[docs/SILICON_IMPROVEMENTS.md](docs/SILICON_IMPROVEMENTS.md)**
 
-### macOS Native Features (Phase 3)
+### macOS Native Features (Planned)
 
-LAO includes native macOS UI/UX integration:
+Future macOS-specific enhancements under development:
 
-**Menu Bar**:
-- Standard File, Edit, View, Help menus
-- Native keyboard shortcuts (Cmd+N, Cmd+O, Cmd+R, etc.)
-- Preferences and app menu
+- **Native Menu Bar** - Standard File, Edit, View, Help menus with native shortcuts
+- **Spotlight Search** - Index workflows and plugins for system-wide search
+- **Quick Look Preview** - Preview YAML workflows from Finder
+- **Notification Center** - Workflow completion and error notifications
 
-**Spotlight Search**:
-- Index workflows and plugins
-- Full-text search across metadata
-- Recent items tracking
-- ```bash
-  lao dev macos spotlight "audio"
-  # 🔍 Spotlight Results for 'audio': 3 items
-  ```
-
-**Quick Look Preview**:
-- Preview YAML workflows
-- Preview markdown documentation
-- Native file preview integration
-- ```bash
-  lao dev macos quicklook --param ./workflows/test.yaml
-  ```
-
-**Notification Center**:
-- Workflow completion notifications
-- Error notifications
-- Background task updates
-- ```bash
-  lao dev macos notify
-  ```
-
-**Keyboard Shortcuts**:
-- ```bash
-  lao dev macos shortcuts
-  # 📋 LAO Keyboard Shortcuts:
-  #   New Workflow:        Cmd+N
-  #   Open Workflow:       Cmd+O
-  #   Run Workflow:        Cmd+R
-  ```
-
-**Initialize All Features**:
-```bash
-# Set up menu bar, Spotlight indexing, notifications
-lao dev macos init --param ./workflows
-```
+See **[docs/APPLE_SILICON.md](docs/APPLE_SILICON.md)** for the full roadmap.
 
 ### Troubleshooting on Apple Silicon
 
+**"Rosetta 2 Warning"**: You're using an x86_64 binary on Apple Silicon.
 
-## 🧪 Testing
+```bash
+# Use native build instead
+./scripts/build-apple-silicon.sh
+```
+
+**Slow GPU performance**: Check Metal availability:
+
+```bash
+system_profiler SPDisplaysDataType | grep Metal
+# Should show M1, M2, M3, or M4
+```
+
+---
+
+## Testing
 
 LAO includes comprehensive test coverage across all features:
 
@@ -627,25 +608,6 @@ cd core
 ```
 
 See **[TEST_REPORT.md](TEST_REPORT.md)** for detailed test coverage and results.
-**"Rosetta 2 Warning"**: You're using an x86_64 binary on Apple Silicon.
-```bash
-# Use native build instead
-./scripts/build-apple-silicon.sh
-``**Architecture**: `docs/architecture.md` - Core system design
-- **Plugins**: `docs/plugins.md` - Plugin development guide
-- **Workflows**: `docs/workflows.md` - Workflow syntax reference
-- **CLI**: `docs/cli.md` - Command-line interface
-- **Observability**: `docs/observability.md` - Logging and monitoring
-- **Multimodal Guide**: `docs/MULTIMODAL_GUIDE.md` - Image/video/audio processing
-- **Test Report**: `TEST_REPORT.md` - Comprehensive test coverage (99 tests)
-- **Integration Status**: `INTEGRATION_STATUS.md` - Feature integration details
-# Should show M1, M2, M3, or M4
-```
-
-**Slow GPU performance**: Check Metal availability:
-```bash
-system_profiler SPDisplaysDataType | grep Metal
-```
 
 ---
 

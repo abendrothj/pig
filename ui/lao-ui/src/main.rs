@@ -3,6 +3,11 @@ use eframe::egui;
 mod app;
 mod backend;
 mod components;
+mod undo;
+mod metrics;
+mod file_upload;
+mod timeline;
+mod multimodal;
 // mod ui_old; // Not compiling ui_old to avoid duplicate symbol errors or unused code warnings if possible, but user asked to keep it.
 // Actually, if I include `mod ui_old;`, it will try to compile it.
 // `ui_old.rs` has `LaoApp` struct which might conflict if I import it, but I am not importing it.
