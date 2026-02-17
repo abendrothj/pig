@@ -7,7 +7,7 @@ unsafe extern "C" fn name() -> *const c_char {
 }
 
 unsafe extern "C" fn run(input: *const PluginInput) -> PluginOutput {
-    if input.is_null() {
+    if input.is_null() || (*input).text.is_null() {
         println!("[EchoPlugin] Received null input");
         return PluginOutput {
             text: std::ptr::null_mut(),
@@ -45,7 +45,7 @@ unsafe extern "C" fn run_with_buffer(
     buffer: *mut c_char,
     buffer_len: usize,
 ) -> usize {
-    if input.is_null() || buffer.is_null() || buffer_len == 0 {
+    if input.is_null() || (*input).text.is_null() || buffer.is_null() || buffer_len == 0 {
         return 0;
     }
     let c_str = std::ffi::CStr::from_ptr((*input).text);
@@ -82,7 +82,7 @@ unsafe extern "C" fn get_metadata() -> PluginMetadata {
 }
 
 unsafe extern "C" fn validate_input(input: *const PluginInput) -> bool {
-    if input.is_null() {
+    if input.is_null() || (*input).text.is_null() {
         return false;
     }
     let c_str = CStr::from_ptr((*input).text);

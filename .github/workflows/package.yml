@@ -24,48 +24,51 @@ jobs:
   package-linux:
     if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'linux') || github.event_name == 'push' }}
     runs-on: ubuntu-latest
-    
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Install Rust
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: stable
         components: rustfmt, clippy
-        override: true
-    
+
     - name: Install system dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf pkg-config
-    
+
     - name: Cache cargo registry
       uses: actions/cache@v4
       with:
         path: ~/.cargo/registry
         key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-    
+
     - name: Cache cargo build
       uses: actions/cache@v4
       with:
         path: target
         key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-    
+
+    - name: Build plugins
+      run: bash scripts/build-plugins.sh
+
     - name: Run tests
-      run: cargo test
-    
+      run: cargo test --workspace
+
+    - name: Run FFI Fuzz Tests
+      run: cargo test -p lao-orchestrator-core --test ffi_fuzz_test
+      env:
+        LAO_FUZZ_SEED: 42
+
     - name: Build release
       run: |
         cargo build --release --bin lao-cli
         cargo build --release --bin lao-ui
-    
-    - name: Build plugins
-      run: bash scripts/build-plugins.sh
-    
+
     - name: Create packages
       run: bash scripts/create-packages.sh
-    
+
     - name: Upload Linux packages
       uses: actions/upload-artifact@v4
       with:
@@ -82,43 +85,46 @@ jobs:
   package-macos:
     if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'macos') || github.event_name == 'push' }}
     runs-on: macos-latest
-    
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Install Rust
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: stable
         components: rustfmt, clippy
-        override: true
-    
+
     - name: Cache cargo registry
       uses: actions/cache@v4
       with:
         path: ~/.cargo/registry
         key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-    
+
     - name: Cache cargo build
       uses: actions/cache@v4
       with:
         path: target
         key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-    
+
+    - name: Build plugins
+      run: bash scripts/build-plugins.sh
+
     - name: Run tests
-      run: cargo test
-    
+      run: cargo test --workspace
+
+    - name: Run FFI Fuzz Tests
+      run: cargo test -p lao-orchestrator-core --test ffi_fuzz_test
+      env:
+        LAO_FUZZ_SEED: 42
+
     - name: Build release
       run: |
         cargo build --release --bin lao-cli
         cargo build --release --bin lao-ui
-    
-    - name: Build plugins
-      run: bash scripts/build-plugins.sh
-    
+
     - name: Create packages
       run: bash scripts/create-packages.sh
-    
+
     - name: Upload macOS packages
       uses: actions/upload-artifact@v4
       with:
@@ -133,43 +139,46 @@ jobs:
   package-windows:
     if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'windows') || github.event_name == 'push' }}
     runs-on: windows-latest
-    
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Install Rust
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: stable
         components: rustfmt, clippy
-        override: true
-    
+
     - name: Cache cargo registry
       uses: actions/cache@v4
       with:
         path: ~/.cargo/registry
         key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-    
+
     - name: Cache cargo build
       uses: actions/cache@v4
       with:
         path: target
         key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-    
+
+    - name: Build plugins
+      run: bash scripts/build-plugins.sh
+
     - name: Run tests
-      run: cargo test
-    
+      run: cargo test --workspace
+
+    - name: Run FFI Fuzz Tests
+      run: cargo test -p lao-orchestrator-core --test ffi_fuzz_test
+      env:
+        LAO_FUZZ_SEED: 42
+
     - name: Build release
       run: |
         cargo build --release --bin lao-cli
         cargo build --release --bin lao-ui
-    
-    - name: Build plugins
-      run: bash scripts/build-plugins.sh
-    
+
     - name: Create packages
       run: bash scripts/create-packages.sh
-    
+
     - name: Upload Windows packages
       uses: actions/upload-artifact@v4
       with:
@@ -185,17 +194,17 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     needs: [package-linux, package-macos, package-windows]
     runs-on: ubuntu-latest
-    
+
     steps:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
-    
+
     - name: Download all packages
       uses: actions/download-artifact@v4
       with:
         path: packages/
-    
+
     - name: Extract packages for release
       run: |
         mkdir -p release-assets
@@ -213,29 +222,29 @@ jobs:
         find packages/ -name "lao-cli.exe" -exec cp {} release-assets/ \;
         find packages/ -name "lao-ui.exe" -exec cp {} release-assets/ \;
         ls -la release-assets/
-    
+
     - name: Get commit message
       id: commit_message
       run: |
         COMMIT_MSG=$(git log -1 --pretty=format:"%s")
         echo "message=$COMMIT_MSG" >> $GITHUB_OUTPUT
         echo "Commit message: $COMMIT_MSG"
-    
+
     - name: Create Release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         files: |
           release-assets/*
         body: |
           ## Changes in this release
           ${{ steps.commit_message.outputs.message }}
-          
+
           ## Installation
           Choose the appropriate package for your platform:
           - **Linux**: `.deb` (Debian/Ubuntu), `.rpm` (RedHat/Fedora), `.AppImage` (portable), or `.tar.gz`
           - **macOS**: `.dmg` (recommended) or `.tar.gz`
           - **Windows**: `.msi` (recommended) or `.zip`
-          
+
           ## Binaries
           Direct binaries are also available for manual installation.
         generate_release_notes: true
