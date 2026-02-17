@@ -8,11 +8,20 @@
 //! - Malformed JSON parsing
 //! - Memory lifecycle issues
 //!
+//! Run modes:
+//!   cargo test --test ffi_fuzz_test                          # Standard
+//!   cargo +nightly miri test --test ffi_fuzz_test            # Miri (pure-Rust harnesses only)
+//!   RUSTFLAGS="-Zsanitizer=address" cargo +nightly test \
+//!     --test ffi_fuzz_test --target aarch64-apple-darwin     # ASan (all harnesses incl. FFI)
+//!
 //! Reproducibility: set LAO_FUZZ_SEED=<seed> to replay a specific run.
 
+#[cfg(not(miri))]
 use lao_orchestrator_core::cross_platform::PathUtils;
+#[cfg(not(miri))]
 use lao_orchestrator_core::plugins::PluginRegistry;
 use lao_plugin_api::*;
+#[cfg(not(miri))]
 use serial_test::serial;
 use std::ffi::{c_char, CStr, CString};
 use std::panic::{self, AssertUnwindSafe};
@@ -61,8 +70,16 @@ impl FuzzRng {
 
 fn get_seed() -> u64 {
     if let Ok(s) = std::env::var("LAO_FUZZ_SEED") {
-        s.parse().unwrap_or(42)
-    } else {
+        return s.parse().unwrap_or(42);
+    }
+    // Under Miri, SystemTime::now() is unavailable without -Zmiri-disable-isolation.
+    // Fall back to a fixed seed so Miri runs are deterministic.
+    #[cfg(miri)]
+    {
+        42
+    }
+    #[cfg(not(miri))]
+    {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
@@ -236,6 +253,7 @@ fn gen_c_string(rng: &mut FuzzRng) -> Option<CString> {
 }
 
 /// Generate a PluginInput with adversarial text field.
+#[cfg(not(miri))]
 fn gen_plugin_input(rng: &mut FuzzRng, owned: &mut OwnedStrings) -> PluginInput {
     match gen_c_string(rng) {
         Some(s) => PluginInput {
@@ -490,6 +508,7 @@ fn fuzz_plugin_info_from_metadata(rng: &mut FuzzRng) -> FuzzResult {
 }
 
 /// Harness 2: Fuzz the `run` function through a loaded plugin's VTable.
+#[cfg(not(miri))]
 fn fuzz_plugin_run(vtable: &PluginVTable, rng: &mut FuzzRng) -> FuzzResult {
     let mut owned = OwnedStrings::new();
     let input = gen_plugin_input(rng, &mut owned);
@@ -511,6 +530,7 @@ fn fuzz_plugin_run(vtable: &PluginVTable, rng: &mut FuzzRng) -> FuzzResult {
 }
 
 /// Harness 3: Fuzz validate_input through a loaded plugin's VTable.
+#[cfg(not(miri))]
 fn fuzz_plugin_validate_input(vtable: &PluginVTable, rng: &mut FuzzRng) -> FuzzResult {
     let mut owned = OwnedStrings::new();
     let input = gen_plugin_input(rng, &mut owned);
@@ -527,6 +547,7 @@ fn fuzz_plugin_validate_input(vtable: &PluginVTable, rng: &mut FuzzRng) -> FuzzR
 }
 
 /// Harness 4: Fuzz run_with_buffer for buffer overflow detection.
+#[cfg(not(miri))]
 fn fuzz_plugin_run_with_buffer(vtable: &PluginVTable, rng: &mut FuzzRng) -> FuzzResult {
     let mut owned = OwnedStrings::new();
     let input = gen_plugin_input(rng, &mut owned);
@@ -698,6 +719,7 @@ fn fuzz_synthetic_vtable_metadata() -> Vec<FuzzResult> {
 }
 
 /// Harness 7: Test null text pointer handling across all VTable functions.
+#[cfg(not(miri))]
 fn fuzz_null_text_detection(vtable: &PluginVTable) -> FuzzResult {
     let input = PluginInput {
         text: std::ptr::null_mut(),
@@ -777,9 +799,10 @@ fn fuzz_multimodal_input_construction(rng: &mut FuzzRng) -> FuzzResult {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: load EchoPlugin if available
+// Helper: load EchoPlugin if available (not available under Miri — no FFI)
 // ---------------------------------------------------------------------------
 
+#[cfg(not(miri))]
 fn load_echo_plugin() -> Option<PluginRegistry> {
     let plugin_dir = PathUtils::plugin_dir();
     let plugin_dir_str = plugin_dir.to_str().unwrap_or("plugins");
@@ -796,6 +819,11 @@ fn load_echo_plugin() -> Option<PluginRegistry> {
 // Test functions
 // ---------------------------------------------------------------------------
 
+// Miri is ~100x slower; use fewer iterations. Even one iteration is valuable
+// since Miri checks every memory operation for UB.
+#[cfg(miri)]
+const FUZZ_ITERATIONS: usize = 50;
+#[cfg(not(miri))]
 const FUZZ_ITERATIONS: usize = 10_000;
 
 #[test]
@@ -888,6 +916,7 @@ fn fuzz_test_synthetic_vtable_metadata() {
 }
 
 #[test]
+#[cfg(not(miri))]
 #[serial]
 fn fuzz_test_echo_plugin_run() {
     let reg = match load_echo_plugin() {
@@ -920,6 +949,7 @@ fn fuzz_test_echo_plugin_run() {
 }
 
 #[test]
+#[cfg(not(miri))]
 #[serial]
 fn fuzz_test_echo_plugin_validate_input() {
     let reg = match load_echo_plugin() {
@@ -952,6 +982,7 @@ fn fuzz_test_echo_plugin_validate_input() {
 }
 
 #[test]
+#[cfg(not(miri))]
 #[serial]
 fn fuzz_test_echo_plugin_run_with_buffer() {
     let reg = match load_echo_plugin() {
@@ -984,6 +1015,7 @@ fn fuzz_test_echo_plugin_run_with_buffer() {
 }
 
 #[test]
+#[cfg(not(miri))]
 #[serial]
 fn fuzz_test_null_text_pointer_detection() {
     let reg = match load_echo_plugin() {

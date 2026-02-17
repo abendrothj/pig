@@ -3,9 +3,13 @@
 Thumbs.db
 
 # Rust
-/core/target/
 **/target/
 Cargo.lock
+
+# Compiled plugin binaries
+plugins/*.dylib
+plugins/*.so
+plugins/*.dll
 
 # Distribution packages
 /dist/
@@ -17,8 +21,10 @@ Cargo.lock
 *.rpm
 *.AppImage
 *.msi
-*.zip
+
+# Vendored C/C++ sources
 /whisper.cpp/
+
 # Node/Svelte
 /ui/lao-ui/node_modules/
 /ui/lao-ui/.svelte-kit/
@@ -28,6 +34,11 @@ Cargo.lock
 # Tauri
 /ui/lao-ui/src-tauri/target/
 /ui/lao-ui/src-tauri/Cargo.lock
+
+# Vite/SvelteKit
+/ui/lao-ui/vite.config.js.timestamp-*
+/ui/lao-ui/vite.config.ts.timestamp-*
+ui/lao-ui/gen/
 
 # Environment
 .env
@@ -40,15 +51,12 @@ Cargo.lock
 context/
 
 # Logs
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Misc
-*.log
-.*
-# Vite/SvelteKit
-/ui/lao-ui/vite.config.js.timestamp-*
-/ui/lao-ui/vite.config.ts.timestamp-* plugins_runtime/
-ui/lao-ui/gen/
+# Runtime
+plugins_runtime/
+.whisper_cpp_path

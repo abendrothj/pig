@@ -32,8 +32,6 @@ name = "test_runner"
 path = "test_runner.rs"
 
 [dev-dependencies]
-clippy = "*"
-rustfmt = "*"
 serial_test = "2.0"
 memoffset = "0.9"
 
