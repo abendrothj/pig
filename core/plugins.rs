@@ -11,7 +11,6 @@ pub struct PluginInstance {
     pub library: Arc<Library>,
     pub vtable: PluginVTablePtr,
     pub info: PluginInfo,
-    pub metadata: PluginInfo, // Use PluginInfo instead of PluginMetadata for Debug/Clone
 }
 
 impl PluginInstance {
@@ -39,8 +38,7 @@ impl PluginInstance {
             Ok(PluginInstance {
                 library: Arc::new(library),
                 vtable,
-                info: info.clone(),
-                metadata: info,
+                info,
             })
         }
     }
@@ -137,52 +135,93 @@ impl PluginRegistry {
     pub fn load_plugins_from_directory(&mut self, plugin_dir: &str) {
         tracing::debug!("Loading plugins from directory: {}", plugin_dir);
 
-        if let Ok(entries) = std::fs::read_dir(plugin_dir) {
-            let mut found_files = 0;
-            let mut loaded_count = 0;
+        let entries = match std::fs::read_dir(plugin_dir) {
+            Ok(e) => e,
+            Err(_) => {
+                tracing::error!("Failed to read plugin directory: {}", plugin_dir);
+                return;
+            }
+        };
 
-            for entry in entries.filter_map(|e| e.ok()) {
-                let path = entry.path();
-                if path.is_dir() {
-                    if let Ok(files) = std::fs::read_dir(&path) {
-                        for f in files.filter_map(|e| e.ok()) {
-                            let fpath = f.path();
-                            if let Some(ext) = fpath.extension().and_then(|s| s.to_str()) {
-                                if self.is_shared_library_extension(ext) {
-                                    found_files += 1;
-                                    tracing::debug!("Found plugin file in subdirectory: {}", fpath.display());
-                                    match self.load_plugin(&fpath) {
-                                        Ok(plugin) => {
-                                            self.register_plugin(plugin);
-                                            loaded_count += 1;
-                                        }
-                                        Err(e) => {
-                                            tracing::error!("Failed to load plugin {}: {}", fpath.display(), e);
-                                        }
-                                    }
-                                }
-                            }
-                        }
+        let ext = Platform::shared_lib_extension();
+        let prefix = Platform::shared_lib_prefix();
+        let mut found_files = 0;
+        let mut loaded_count = 0;
+
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+
+            if path.is_dir() {
+                // Strategy 1: Check target/release/ inside plugin subdirectory
+                // Each plugin builds into its own target/release/ with cargo build --release
+                let release_dir = path.join("target").join("release");
+                if release_dir.is_dir() {
+                    loaded_count += self.load_shared_libs_from(&release_dir, prefix, ext, &mut found_files);
+                }
+
+                // Strategy 2: Check for shared libs directly in the subdirectory
+                // (for manually placed or pre-built plugins)
+                loaded_count += self.load_shared_libs_from(&path, prefix, ext, &mut found_files);
+            } else if self.is_shared_library_file(&path) {
+                // Strategy 3: Shared libs directly in plugins/ root (legacy layout)
+                found_files += 1;
+                tracing::debug!("Found plugin file in root: {}", path.display());
+                match self.load_plugin(&path) {
+                    Ok(plugin) => {
+                        self.register_plugin(plugin);
+                        loaded_count += 1;
                     }
-                } else if self.is_shared_library_file(&path) {
-                    found_files += 1;
-                    tracing::debug!("Found plugin file in root: {}", path.display());
-                    match self.load_plugin(&path) {
-                        Ok(plugin) => {
-                            self.register_plugin(plugin);
-                            loaded_count += 1;
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to load plugin {}: {}", path.display(), e);
-                        }
+                    Err(e) => {
+                        tracing::error!("Failed to load plugin {}: {}", path.display(), e);
                     }
                 }
             }
-
-            tracing::debug!("Plugin loading summary: {} files found, {} plugins loaded", found_files, loaded_count);
-        } else {
-            tracing::error!("Failed to read plugin directory: {}", plugin_dir);
         }
+
+        tracing::debug!("Plugin loading summary: {} files found, {} plugins loaded", found_files, loaded_count);
+    }
+
+    /// Load all shared libraries from a directory, returning count of successfully loaded plugins.
+    fn load_shared_libs_from(
+        &mut self,
+        dir: &std::path::Path,
+        prefix: &str,
+        ext: &str,
+        found_files: &mut usize,
+    ) -> usize {
+        let files = match std::fs::read_dir(dir) {
+            Ok(f) => f,
+            Err(_) => return 0,
+        };
+
+        let mut loaded = 0;
+        for f in files.filter_map(|e| e.ok()) {
+            let fpath = f.path();
+            let fname = match fpath.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n,
+                None => continue,
+            };
+
+            // Match plugin shared libraries: lib*plugin*.{dylib,so,dll}
+            let matches_ext = fpath.extension().and_then(|e| e.to_str()) == Some(ext);
+            let matches_pattern = fname.starts_with(prefix)
+                && fname.to_lowercase().contains("plugin");
+
+            if matches_ext && matches_pattern {
+                *found_files += 1;
+                tracing::debug!("Found plugin: {}", fpath.display());
+                match self.load_plugin(&fpath) {
+                    Ok(plugin) => {
+                        self.register_plugin(plugin);
+                        loaded += 1;
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to load plugin {}: {}", fpath.display(), e);
+                    }
+                }
+            }
+        }
+        loaded
     }
 
     fn is_shared_library_extension(&self, ext: &str) -> bool {

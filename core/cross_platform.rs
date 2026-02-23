@@ -149,7 +149,7 @@ impl PathUtils {
         for _ in 0..max_depth {
             let plugins_path = search_dir.join("plugins");
             if plugins_path.exists() {
-                println!("[DEBUG] PathUtils::plugin_dir() found plugins at: {}", plugins_path.display());
+                tracing::debug!("PathUtils::plugin_dir() found plugins at: {}", plugins_path.display());
                 return plugins_path;
             }
             
@@ -163,7 +163,7 @@ impl PathUtils {
         
         // Fallback: use plugins/ relative to current directory
         let fallback = current_dir.join("plugins");
-        println!("[DEBUG] PathUtils::plugin_dir() using fallback: {}", fallback.display());
+        tracing::debug!("PathUtils::plugin_dir() using fallback: {}", fallback.display());
         fallback
     }
 

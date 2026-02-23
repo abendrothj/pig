@@ -138,20 +138,20 @@ where
         let plugin_names = reg_guard.plugin_names();
 
         if plugin_count == 0 {
-            eprintln!("[ERROR] No plugins loaded! Cannot validate workflow.");
-            eprintln!("[INFO] Expected plugins directory: {}", PathUtils::plugin_dir().display());
-            eprintln!("[INFO] Make sure plugins are built: bash scripts/build-plugins.sh");
+            tracing::error!(" No plugins loaded! Cannot validate workflow.");
+            tracing::info!(" Expected plugins directory: {}", PathUtils::plugin_dir().display());
+            tracing::info!(" Make sure plugins are built: bash scripts/build-plugins.sh");
             return Err(format!("No plugins loaded. Plugin directory: {}", PathUtils::plugin_dir().display()));
         }
 
-        println!("[DEBUG] Validating workflow with {} loaded plugins: {:?}", plugin_count, plugin_names);
+        tracing::debug!(" Validating workflow with {} loaded plugins: {:?}", plugin_count, plugin_names);
 
         let errors = validate_workflow_types(&dag, &reg_guard);
         if !errors.is_empty() {
-            eprintln!("[ERROR] Workflow validation failed with {} errors", errors.len());
-            eprintln!("[INFO] Loaded plugins: {:?}", plugin_names);
+            tracing::error!(" Workflow validation failed with {} errors", errors.len());
+            tracing::info!(" Loaded plugins: {:?}", plugin_names);
             for (step_idx, error_msg) in &errors {
-                eprintln!("[ERROR] Step {}: {}", step_idx, error_msg);
+                tracing::error!(" Step {}: {}", step_idx, error_msg);
             }
             return Err(format!("Workflow validation failed: {:?}", errors));
         }
@@ -174,7 +174,7 @@ where
             let node = match node_map.get(&node_id_clone) {
                 Some(n) => n,
                 None => {
-                    eprintln!("[ERROR] Node '{}' not found in DAG during parallel execution", node_id_clone);
+                    tracing::error!(" Node '{}' not found in DAG during parallel execution", node_id_clone);
                     continue;
                 }
             };
@@ -522,7 +522,7 @@ where
         // Wait for all nodes in this level to complete
         for handle in handles {
             if let Err(e) = handle.join() {
-                eprintln!("[ERROR] Thread panicked during parallel execution: {:?}", e);
+                tracing::error!(" Thread panicked during parallel execution: {:?}", e);
             }
         }
     }

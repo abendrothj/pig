@@ -19,21 +19,21 @@ pub fn run_workflow_yaml(path: &str) -> Result<Vec<StepLog>, String> {
     let plugin_names = registry.plugin_names();
 
     if plugin_count == 0 {
-        eprintln!("[ERROR] No plugins loaded! Cannot execute workflow.");
-        eprintln!("[INFO] Expected plugins directory: {}", PathUtils::plugin_dir().display());
-        eprintln!("[INFO] Make sure plugins are built: bash scripts/build-plugins.sh");
+        tracing::error!(" No plugins loaded! Cannot execute workflow.");
+        tracing::info!(" Expected plugins directory: {}", PathUtils::plugin_dir().display());
+        tracing::info!(" Make sure plugins are built: bash scripts/build-plugins.sh");
         return Err(format!("No plugins loaded. Plugin directory: {}", PathUtils::plugin_dir().display()));
     }
 
-    println!("[DEBUG] Executing workflow with {} loaded plugins: {:?}", plugin_count, plugin_names);
+    tracing::debug!(" Executing workflow with {} loaded plugins: {:?}", plugin_count, plugin_names);
 
     // Validate workflow
     let errors = validate_workflow_types(&dag, &registry);
     if !errors.is_empty() {
-        eprintln!("[ERROR] Workflow validation failed with {} errors", errors.len());
-        eprintln!("[INFO] Loaded plugins: {:?}", plugin_names);
+        tracing::error!(" Workflow validation failed with {} errors", errors.len());
+        tracing::info!(" Loaded plugins: {:?}", plugin_names);
         for (step_idx, error_msg) in &errors {
-            eprintln!("[ERROR] Step {}: {}", step_idx, error_msg);
+            tracing::error!(" Step {}: {}", step_idx, error_msg);
         }
         return Err(format!("Workflow validation failed: {:?}", errors));
     }
@@ -224,20 +224,20 @@ where
     let plugin_names = registry.plugin_names();
 
     if plugin_count == 0 {
-        eprintln!("[ERROR] No plugins loaded! Cannot execute workflow.");
-        eprintln!("[INFO] Expected plugins directory: {}", PathUtils::plugin_dir().display());
-        eprintln!("[INFO] Make sure plugins are built: bash scripts/build-plugins.sh");
+        tracing::error!(" No plugins loaded! Cannot execute workflow.");
+        tracing::info!(" Expected plugins directory: {}", PathUtils::plugin_dir().display());
+        tracing::info!(" Make sure plugins are built: bash scripts/build-plugins.sh");
         return Err(format!("No plugins loaded. Plugin directory: {}", PathUtils::plugin_dir().display()));
     }
 
-    println!("[DEBUG] Executing workflow with {} loaded plugins: {:?}", plugin_count, plugin_names);
+    tracing::debug!(" Executing workflow with {} loaded plugins: {:?}", plugin_count, plugin_names);
 
     let errors = validate_workflow_types(&dag, &registry);
     if !errors.is_empty() {
-        eprintln!("[ERROR] Workflow validation failed with {} errors", errors.len());
-        eprintln!("[INFO] Loaded plugins: {:?}", plugin_names);
+        tracing::error!(" Workflow validation failed with {} errors", errors.len());
+        tracing::info!(" Loaded plugins: {:?}", plugin_names);
         for (step_idx, error_msg) in &errors {
-            eprintln!("[ERROR] Step {}: {}", step_idx, error_msg);
+            tracing::error!(" Step {}: {}", step_idx, error_msg);
         }
         return Err(format!("Workflow validation failed: {:?}", errors));
     }
