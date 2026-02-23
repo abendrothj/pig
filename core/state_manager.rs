@@ -123,3 +123,175 @@ impl WorkflowStateManager {
         Ok(removed_count)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workflow_state::WorkflowStatus;
+    use std::time::{Duration, SystemTime};
+
+    fn temp_state_dir() -> tempfile::TempDir {
+        tempfile::tempdir().expect("create temp dir")
+    }
+
+    fn make_state(id: &str, status: WorkflowStatus) -> WorkflowState {
+        let mut state = WorkflowState::new(id.to_string(), format!("Workflow {}", id), 2);
+        state.status = status;
+        state
+    }
+
+    #[test]
+    fn test_create_and_load_state() {
+        let dir = temp_state_dir();
+        let mut manager = WorkflowStateManager::new(dir.path()).unwrap();
+
+        let state = make_state("wf-1", WorkflowStatus::Running);
+        manager.save_state(&state).unwrap();
+
+        let loaded = manager.load_state("wf-1").unwrap();
+        assert!(loaded.is_some());
+        let loaded = loaded.unwrap();
+        assert_eq!(loaded.workflow_id, "wf-1");
+        assert!(matches!(loaded.status, WorkflowStatus::Running));
+    }
+
+    #[test]
+    fn test_load_nonexistent_state() {
+        let dir = temp_state_dir();
+        let manager = WorkflowStateManager::new(dir.path()).unwrap();
+
+        let loaded = manager.load_state("nonexistent").unwrap();
+        assert!(loaded.is_none());
+    }
+
+    #[test]
+    fn test_delete_state() {
+        let dir = temp_state_dir();
+        let mut manager = WorkflowStateManager::new(dir.path()).unwrap();
+
+        let state = make_state("wf-del", WorkflowStatus::Completed);
+        manager.save_state(&state).unwrap();
+        assert_eq!(manager.list_states().len(), 1);
+
+        manager.delete_state("wf-del").unwrap();
+        assert_eq!(manager.list_states().len(), 0);
+        assert!(manager.load_state("wf-del").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_delete_nonexistent_state_is_ok() {
+        let dir = temp_state_dir();
+        let mut manager = WorkflowStateManager::new(dir.path()).unwrap();
+        // Should not error
+        manager.delete_state("nope").unwrap();
+    }
+
+    #[test]
+    fn test_list_states() {
+        let dir = temp_state_dir();
+        let mut manager = WorkflowStateManager::new(dir.path()).unwrap();
+
+        manager.save_state(&make_state("a", WorkflowStatus::Pending)).unwrap();
+        manager.save_state(&make_state("b", WorkflowStatus::Running)).unwrap();
+        manager.save_state(&make_state("c", WorkflowStatus::Completed)).unwrap();
+
+        assert_eq!(manager.list_states().len(), 3);
+    }
+
+    #[test]
+    fn test_list_active_workflows() {
+        let dir = temp_state_dir();
+        let mut manager = WorkflowStateManager::new(dir.path()).unwrap();
+
+        manager.save_state(&make_state("a", WorkflowStatus::Pending)).unwrap();
+        manager.save_state(&make_state("b", WorkflowStatus::Running)).unwrap();
+        manager.save_state(&make_state("c", WorkflowStatus::Completed)).unwrap();
+        manager.save_state(&make_state("d", WorkflowStatus::Failed)).unwrap();
+
+        let active = manager.list_active_workflows();
+        assert_eq!(active.len(), 2);
+    }
+
+    #[test]
+    fn test_list_scheduled_workflows() {
+        let dir = temp_state_dir();
+        let mut manager = WorkflowStateManager::new(dir.path()).unwrap();
+
+        manager.save_state(&make_state("a", WorkflowStatus::Scheduled)).unwrap();
+        manager.save_state(&make_state("b", WorkflowStatus::Running)).unwrap();
+
+        let scheduled = manager.list_scheduled_workflows();
+        assert_eq!(scheduled.len(), 1);
+        assert_eq!(scheduled[0].workflow_id, "a");
+    }
+
+    #[test]
+    fn test_persistence_across_instances() {
+        let dir = temp_state_dir();
+
+        // First instance saves state
+        {
+            let mut manager = WorkflowStateManager::new(dir.path()).unwrap();
+            manager.save_state(&make_state("persist", WorkflowStatus::Running)).unwrap();
+        }
+
+        // Second instance should load it from disk
+        {
+            let manager = WorkflowStateManager::new(dir.path()).unwrap();
+            assert_eq!(manager.list_states().len(), 1);
+            assert_eq!(manager.list_states()[0].workflow_id, "persist");
+        }
+    }
+
+    #[test]
+    fn test_cleanup_old_states() {
+        let dir = temp_state_dir();
+        let mut manager = WorkflowStateManager::new(dir.path()).unwrap();
+
+        // Create a completed state with old completed_at
+        let mut old_state = make_state("old", WorkflowStatus::Completed);
+        old_state.completed_at = Some(SystemTime::now() - Duration::from_secs(48 * 3600));
+        manager.save_state(&old_state).unwrap();
+
+        // Create a recent completed state
+        let mut recent_state = make_state("recent", WorkflowStatus::Completed);
+        recent_state.completed_at = Some(SystemTime::now());
+        manager.save_state(&recent_state).unwrap();
+
+        // Create a running state (should never be cleaned)
+        manager.save_state(&make_state("running", WorkflowStatus::Running)).unwrap();
+
+        let removed = manager.cleanup_old_states(24).unwrap();
+        assert_eq!(removed, 1);
+        assert_eq!(manager.list_states().len(), 2);
+    }
+
+    #[test]
+    fn test_overwrite_existing_state() {
+        let dir = temp_state_dir();
+        let mut manager = WorkflowStateManager::new(dir.path()).unwrap();
+
+        let mut state = make_state("wf-1", WorkflowStatus::Running);
+        manager.save_state(&state).unwrap();
+
+        state.status = WorkflowStatus::Completed;
+        state.completed_at = Some(SystemTime::now());
+        manager.save_state(&state).unwrap();
+
+        let loaded = manager.load_state("wf-1").unwrap().unwrap();
+        assert!(matches!(loaded.status, WorkflowStatus::Completed));
+    }
+
+    #[test]
+    fn test_corrupt_json_file_skipped_on_load() {
+        let dir = temp_state_dir();
+
+        // Write corrupt JSON
+        let corrupt_path = dir.path().join("bad.json");
+        fs::write(&corrupt_path, "not valid json{{{").unwrap();
+
+        // Should still construct successfully, just skip the corrupt file
+        let manager = WorkflowStateManager::new(dir.path()).unwrap();
+        assert_eq!(manager.list_states().len(), 0);
+    }
+}

@@ -219,3 +219,147 @@ impl PluginManager {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_plugin_dir() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let plugin_dir = dir.path().join("plugins");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        (dir, plugin_dir)
+    }
+
+    #[test]
+    fn test_plugin_config_default() {
+        let config = PluginConfig::default();
+        assert!(config.enabled);
+        assert!(!config.auto_update);
+        assert!(config.permissions.contains(&"read_files".to_string()));
+        assert!(config.permissions.contains(&"write_files".to_string()));
+    }
+
+    #[test]
+    fn test_plugin_config_serialization_roundtrip() {
+        let mut config = PluginConfig::default();
+        config.enabled = false;
+        config.settings.insert(
+            "model".to_string(),
+            serde_json::Value::String("gpt-4".to_string()),
+        );
+
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: PluginConfig = serde_json::from_str(&json).unwrap();
+
+        assert!(!deserialized.enabled);
+        assert_eq!(
+            deserialized.settings.get("model").unwrap().as_str(),
+            Some("gpt-4")
+        );
+    }
+
+    #[test]
+    fn test_plugin_manager_new_creates_dirs() {
+        let (_dir, plugin_dir) = temp_plugin_dir();
+        let manager = PluginManager::new(&plugin_dir).unwrap();
+
+        assert!(plugin_dir.join("configs").exists());
+        assert_eq!(manager.registry.plugin_count(), 0);
+    }
+
+    #[test]
+    fn test_plugin_manager_save_and_load_config() {
+        let (_dir, plugin_dir) = temp_plugin_dir();
+        let manager = PluginManager::new(&plugin_dir).unwrap();
+
+        let config = PluginConfig {
+            enabled: false,
+            settings: HashMap::new(),
+            permissions: vec!["network".to_string()],
+            auto_update: true,
+        };
+
+        manager.save_plugin_config("test_plugin", &config).unwrap();
+
+        // Verify file exists
+        let config_path = plugin_dir.join("configs").join("test_plugin.json");
+        assert!(config_path.exists());
+
+        // Read back
+        let data = std::fs::read_to_string(&config_path).unwrap();
+        let loaded: PluginConfig = serde_json::from_str(&data).unwrap();
+        assert!(!loaded.enabled);
+        assert!(loaded.auto_update);
+        assert_eq!(loaded.permissions, vec!["network".to_string()]);
+    }
+
+    #[test]
+    fn test_is_plugin_enabled_default_true() {
+        let (_dir, plugin_dir) = temp_plugin_dir();
+        let manager = PluginManager::new(&plugin_dir).unwrap();
+
+        // Unknown plugin defaults to enabled
+        assert!(manager.is_plugin_enabled("nonexistent"));
+    }
+
+    #[test]
+    fn test_validate_permissions() {
+        let (_dir, plugin_dir) = temp_plugin_dir();
+        let mut manager = PluginManager::new(&plugin_dir).unwrap();
+
+        let config = PluginConfig {
+            enabled: true,
+            settings: HashMap::new(),
+            permissions: vec!["read_files".to_string()],
+            auto_update: false,
+        };
+        manager.configs.insert("test".to_string(), config);
+
+        assert!(manager.validate_plugin_permissions("test", "read_files"));
+        assert!(!manager.validate_plugin_permissions("test", "write_files"));
+        assert!(!manager.validate_plugin_permissions("unknown", "read_files"));
+    }
+
+    #[test]
+    fn test_update_plugin_config() {
+        let (_dir, plugin_dir) = temp_plugin_dir();
+        let mut manager = PluginManager::new(&plugin_dir).unwrap();
+
+        let config = PluginConfig::default();
+        manager.configs.insert("test".to_string(), config);
+
+        let mut updated = PluginConfig::default();
+        updated.enabled = false;
+        manager.update_plugin_config("test", updated).unwrap();
+
+        assert!(!manager.is_plugin_enabled("test"));
+
+        // Verify persisted to disk
+        let config_path = plugin_dir.join("configs").join("test.json");
+        let data = std::fs::read_to_string(&config_path).unwrap();
+        let loaded: PluginConfig = serde_json::from_str(&data).unwrap();
+        assert!(!loaded.enabled);
+    }
+
+    #[test]
+    fn test_plugin_event_serialization() {
+        let event = PluginEvent::StepCompleted {
+            workflow_id: "wf-1".to_string(),
+            step_id: "step-1".to_string(),
+            plugin_name: "EchoPlugin".to_string(),
+            output: "hello".to_string(),
+        };
+
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("StepCompleted"));
+        assert!(json.contains("EchoPlugin"));
+
+        let deserialized: PluginEvent = serde_json::from_str(&json).unwrap();
+        if let PluginEvent::StepCompleted { plugin_name, .. } = deserialized {
+            assert_eq!(plugin_name, "EchoPlugin");
+        } else {
+            panic!("wrong variant");
+        }
+    }
+}

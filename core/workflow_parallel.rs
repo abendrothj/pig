@@ -552,3 +552,123 @@ where
     logs.sort_by_key(|l| l.step);
     Ok(logs)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_dag_node(id: &str, parents: Vec<&str>, plugin: &str) -> DagNode {
+        DagNode {
+            id: id.to_string(),
+            step: WorkflowStep {
+                run: plugin.to_string(),
+                params: serde_yaml::Value::Null,
+                depends_on: if parents.is_empty() {
+                    None
+                } else {
+                    Some(parents.iter().map(|p| p.to_string()).collect())
+                },
+                retries: None,
+                retry_delay: None,
+                cache_key: None,
+                input_from: None,
+                input_modality: None,
+                output_modality: None,
+                for_each: None,
+                condition: None,
+                on_success: None,
+                on_failure: None,
+            },
+            parents: parents.iter().map(|p| p.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn test_group_single_node() {
+        let dag = vec![make_dag_node("a", vec![], "EchoPlugin")];
+        let levels = group_by_execution_levels(&dag);
+        assert_eq!(levels.len(), 1);
+        assert_eq!(levels[0], vec!["a"]);
+    }
+
+    #[test]
+    fn test_group_linear_chain() {
+        // a -> b -> c
+        let dag = vec![
+            make_dag_node("a", vec![], "EchoPlugin"),
+            make_dag_node("b", vec!["a"], "EchoPlugin"),
+            make_dag_node("c", vec!["b"], "EchoPlugin"),
+        ];
+        let levels = group_by_execution_levels(&dag);
+        assert_eq!(levels.len(), 3);
+        assert_eq!(levels[0], vec!["a"]);
+        assert_eq!(levels[1], vec!["b"]);
+        assert_eq!(levels[2], vec!["c"]);
+    }
+
+    #[test]
+    fn test_group_parallel_nodes() {
+        // a and b are independent, c depends on both
+        let dag = vec![
+            make_dag_node("a", vec![], "EchoPlugin"),
+            make_dag_node("b", vec![], "EchoPlugin"),
+            make_dag_node("c", vec!["a", "b"], "EchoPlugin"),
+        ];
+        let levels = group_by_execution_levels(&dag);
+        assert_eq!(levels.len(), 2);
+
+        // First level should contain both a and b (order may vary)
+        assert_eq!(levels[0].len(), 2);
+        assert!(levels[0].contains(&"a".to_string()));
+        assert!(levels[0].contains(&"b".to_string()));
+
+        // Second level is just c
+        assert_eq!(levels[1], vec!["c"]);
+    }
+
+    #[test]
+    fn test_group_diamond_dag() {
+        //     a
+        //    / \
+        //   b   c
+        //    \ /
+        //     d
+        let dag = vec![
+            make_dag_node("a", vec![], "EchoPlugin"),
+            make_dag_node("b", vec!["a"], "EchoPlugin"),
+            make_dag_node("c", vec!["a"], "EchoPlugin"),
+            make_dag_node("d", vec!["b", "c"], "EchoPlugin"),
+        ];
+        let levels = group_by_execution_levels(&dag);
+        assert_eq!(levels.len(), 3);
+
+        assert_eq!(levels[0], vec!["a"]);
+        assert_eq!(levels[1].len(), 2);
+        assert!(levels[1].contains(&"b".to_string()));
+        assert!(levels[1].contains(&"c".to_string()));
+        assert_eq!(levels[2], vec!["d"]);
+    }
+
+    #[test]
+    fn test_group_empty_dag() {
+        let dag: Vec<DagNode> = vec![];
+        let levels = group_by_execution_levels(&dag);
+        assert_eq!(levels.len(), 0);
+    }
+
+    #[test]
+    fn test_group_wide_fan_out() {
+        // a -> b, c, d, e (all parallel)
+        let dag = vec![
+            make_dag_node("a", vec![], "EchoPlugin"),
+            make_dag_node("b", vec!["a"], "EchoPlugin"),
+            make_dag_node("c", vec!["a"], "EchoPlugin"),
+            make_dag_node("d", vec!["a"], "EchoPlugin"),
+            make_dag_node("e", vec!["a"], "EchoPlugin"),
+        ];
+        let levels = group_by_execution_levels(&dag);
+        assert_eq!(levels.len(), 2);
+        assert_eq!(levels[0].len(), 1);
+        assert_eq!(levels[1].len(), 4);
+    }
+}

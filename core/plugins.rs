@@ -399,3 +399,115 @@ impl PluginRegistry {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_registry_new_is_empty() {
+        let registry = PluginRegistry::new();
+        assert_eq!(registry.plugin_count(), 0);
+        assert!(registry.plugin_names().is_empty());
+    }
+
+    #[test]
+    fn test_registry_default_is_empty() {
+        let registry = PluginRegistry::default();
+        assert_eq!(registry.plugin_count(), 0);
+    }
+
+    #[test]
+    fn test_load_from_nonexistent_directory() {
+        let mut registry = PluginRegistry::new();
+        registry.load_plugins_from_directory("/nonexistent/path/to/plugins");
+        assert_eq!(registry.plugin_count(), 0);
+    }
+
+    #[test]
+    fn test_load_from_empty_directory() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let mut registry = PluginRegistry::new();
+        registry.load_plugins_from_directory(dir.path().to_str().unwrap());
+        assert_eq!(registry.plugin_count(), 0);
+    }
+
+    #[test]
+    fn test_load_plugin_nonexistent_file() {
+        let registry = PluginRegistry::new();
+        let result = registry.load_plugin(Path::new("/nonexistent/plugin.dylib"));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does not exist"));
+    }
+
+    #[test]
+    fn test_load_plugin_invalid_file() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let fake_plugin = dir.path().join("libfake_plugin.dylib");
+        std::fs::write(&fake_plugin, b"not a real shared library").unwrap();
+
+        let registry = PluginRegistry::new();
+        let result = registry.load_plugin(&fake_plugin);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_nonexistent_plugin() {
+        let registry = PluginRegistry::new();
+        assert!(registry.get("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_get_with_version_nonexistent() {
+        let registry = PluginRegistry::new();
+        assert!(registry.get_with_version("anything", "1.0").is_none());
+    }
+
+    #[test]
+    fn test_find_by_tag_empty() {
+        let registry = PluginRegistry::new();
+        assert!(registry.find_plugins_by_tag("inference").is_empty());
+    }
+
+    #[test]
+    fn test_find_by_capability_empty() {
+        let registry = PluginRegistry::new();
+        assert!(registry.find_plugins_by_capability("text-generation").is_empty());
+    }
+
+    #[test]
+    fn test_remove_nonexistent_plugin() {
+        let mut registry = PluginRegistry::new();
+        let result = registry.remove_plugin("nope");
+        // Should succeed (no dependencies block it, nothing to remove)
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_resolve_dependencies_unknown_plugin() {
+        let registry = PluginRegistry::new();
+        let result = registry.resolve_dependencies("unknown");
+        // Should return just the plugin itself
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), vec!["unknown"]);
+    }
+
+    #[test]
+    fn test_is_shared_library_extension() {
+        let registry = PluginRegistry::new();
+        let ext = Platform::shared_lib_extension();
+        assert!(registry.is_shared_library_extension(ext));
+        assert!(!registry.is_shared_library_extension("txt"));
+        assert!(!registry.is_shared_library_extension("rs"));
+    }
+
+    #[test]
+    fn test_is_shared_library_file() {
+        let registry = PluginRegistry::new();
+        let ext = Platform::shared_lib_extension();
+        let name = format!("libfoo.{}", ext);
+        let path = Path::new(&name);
+        assert!(registry.is_shared_library_file(path));
+        assert!(!registry.is_shared_library_file(Path::new("foo.txt")));
+    }
+}

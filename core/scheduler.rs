@@ -164,3 +164,216 @@ impl WorkflowScheduler {
         self.state_manager.list_states()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::workflow_state::WorkflowSchedule;
+
+    fn temp_scheduler() -> (tempfile::TempDir, WorkflowScheduler) {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let scheduler = WorkflowScheduler::new(dir.path().to_str().unwrap()).unwrap();
+        (dir, scheduler)
+    }
+
+    fn make_schedule(cron: &str, enabled: bool) -> WorkflowSchedule {
+        WorkflowSchedule {
+            cron_expression: Some(cron.to_string()),
+            next_run: None,
+            enabled,
+            max_runs: None,
+            run_count: 0,
+        }
+    }
+
+    #[test]
+    fn test_schedule_and_list_workflow() {
+        let (_dir, mut scheduler) = temp_scheduler();
+
+        let schedule = make_schedule("interval:30", true);
+        scheduler
+            .schedule_workflow("wf-1".to_string(), "test.yaml".to_string(), schedule)
+            .unwrap();
+
+        let listed = scheduler.list_scheduled_workflows();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].0, "wf-1");
+        assert_eq!(listed[0].1.workflow_path, "test.yaml");
+    }
+
+    #[test]
+    fn test_unschedule_workflow() {
+        let (_dir, mut scheduler) = temp_scheduler();
+
+        let schedule = make_schedule("interval:10", true);
+        scheduler
+            .schedule_workflow("wf-1".to_string(), "test.yaml".to_string(), schedule)
+            .unwrap();
+        assert_eq!(scheduler.list_scheduled_workflows().len(), 1);
+
+        scheduler.unschedule_workflow("wf-1").unwrap();
+        assert_eq!(scheduler.list_scheduled_workflows().len(), 0);
+    }
+
+    #[test]
+    fn test_parse_simple_cron_interval() {
+        let (_dir, scheduler) = temp_scheduler();
+
+        let schedule = make_schedule("interval:60", true);
+        let next = scheduler.calculate_next_run(&schedule);
+        assert!(next.is_ok());
+
+        // Should be roughly 60 minutes from now
+        let next = next.unwrap();
+        let diff = next.duration_since(SystemTime::now()).unwrap_or_default();
+        assert!(diff.as_secs() >= 3550 && diff.as_secs() <= 3650);
+    }
+
+    #[test]
+    fn test_parse_simple_cron_daily() {
+        let (_dir, scheduler) = temp_scheduler();
+
+        let schedule = make_schedule("daily:10:30", true);
+        let next = scheduler.calculate_next_run(&schedule);
+        assert!(next.is_ok());
+
+        // Should be roughly 24 hours from now
+        let next = next.unwrap();
+        let diff = next.duration_since(SystemTime::now()).unwrap_or_default();
+        assert!(diff.as_secs() >= 86000 && diff.as_secs() <= 86800);
+    }
+
+    #[test]
+    fn test_parse_simple_cron_weekly() {
+        let (_dir, scheduler) = temp_scheduler();
+
+        let schedule = make_schedule("weekly:Mon:09:00", true);
+        let next = scheduler.calculate_next_run(&schedule);
+        assert!(next.is_ok());
+    }
+
+    #[test]
+    fn test_parse_invalid_cron() {
+        let (_dir, scheduler) = temp_scheduler();
+
+        let schedule = make_schedule("garbage", true);
+        let result = scheduler.calculate_next_run(&schedule);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_invalid_interval_value() {
+        let (_dir, scheduler) = temp_scheduler();
+
+        let schedule = make_schedule("interval:abc", true);
+        let result = scheduler.calculate_next_run(&schedule);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_no_cron_defaults_to_one_hour() {
+        let (_dir, scheduler) = temp_scheduler();
+
+        let schedule = WorkflowSchedule {
+            cron_expression: None,
+            next_run: None,
+            enabled: true,
+            max_runs: None,
+            run_count: 0,
+        };
+        let next = scheduler.calculate_next_run(&schedule).unwrap();
+        let diff = next.duration_since(SystemTime::now()).unwrap_or_default();
+        assert!(diff.as_secs() >= 3550 && diff.as_secs() <= 3650);
+    }
+
+    #[test]
+    fn test_get_due_workflows() {
+        let (_dir, mut scheduler) = temp_scheduler();
+
+        // Schedule with very short interval (should be immediately due after scheduling)
+        // Actually, calculate_next_run returns future time. So we manipulate directly.
+        let schedule = make_schedule("interval:1", true);
+        scheduler
+            .schedule_workflow("wf-due".to_string(), "test.yaml".to_string(), schedule)
+            .unwrap();
+
+        // The next_run is 1 minute in the future, so nothing due yet
+        let due = scheduler.get_due_workflows();
+        assert_eq!(due.len(), 0);
+
+        // Manually set next_run to past
+        if let Some(sw) = scheduler.scheduled_workflows.get_mut("wf-due") {
+            sw.next_run = SystemTime::now() - Duration::from_secs(60);
+        }
+
+        let due = scheduler.get_due_workflows();
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0], "wf-due");
+    }
+
+    #[test]
+    fn test_disabled_workflows_not_due() {
+        let (_dir, mut scheduler) = temp_scheduler();
+
+        let schedule = make_schedule("interval:1", false); // disabled
+        scheduler
+            .schedule_workflow("wf-off".to_string(), "test.yaml".to_string(), schedule)
+            .unwrap();
+
+        // Force past time
+        if let Some(sw) = scheduler.scheduled_workflows.get_mut("wf-off") {
+            sw.next_run = SystemTime::now() - Duration::from_secs(60);
+        }
+
+        let due = scheduler.get_due_workflows();
+        assert_eq!(due.len(), 0);
+    }
+
+    #[test]
+    fn test_update_workflow_run_increments_count() {
+        let (_dir, mut scheduler) = temp_scheduler();
+
+        let schedule = make_schedule("interval:10", true);
+        scheduler
+            .schedule_workflow("wf-1".to_string(), "test.yaml".to_string(), schedule)
+            .unwrap();
+
+        scheduler.update_workflow_run("wf-1").unwrap();
+
+        let sw = &scheduler.scheduled_workflows["wf-1"];
+        assert_eq!(sw.schedule.run_count, 1);
+        assert!(sw.last_run.is_some());
+    }
+
+    #[test]
+    fn test_max_runs_disables_workflow() {
+        let (_dir, mut scheduler) = temp_scheduler();
+
+        let mut schedule = make_schedule("interval:10", true);
+        schedule.max_runs = Some(2);
+        scheduler
+            .schedule_workflow("wf-max".to_string(), "test.yaml".to_string(), schedule)
+            .unwrap();
+
+        scheduler.update_workflow_run("wf-max").unwrap();
+        assert!(scheduler.scheduled_workflows["wf-max"].schedule.enabled);
+
+        scheduler.update_workflow_run("wf-max").unwrap();
+        assert!(!scheduler.scheduled_workflows["wf-max"].schedule.enabled);
+    }
+
+    #[test]
+    fn test_workflow_state_persisted() {
+        let (_dir, mut scheduler) = temp_scheduler();
+
+        let schedule = make_schedule("interval:30", true);
+        scheduler
+            .schedule_workflow("wf-persist".to_string(), "test.yaml".to_string(), schedule)
+            .unwrap();
+
+        let history = scheduler.get_workflow_history("wf-persist").unwrap();
+        assert!(history.is_some());
+        let state = history.unwrap();
+        assert!(matches!(state.status, WorkflowStatus::Scheduled));
+    }
+}
