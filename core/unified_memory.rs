@@ -105,14 +105,13 @@ pub mod unified_memory {
 
     impl Drop for UnifiedMemoryBuffer {
         fn drop(&mut self) {
-            if !self.ptr.as_ptr().is_null() {
-                unsafe {
-                    let layout = Layout::from_size_align_unchecked(
-                        self.size,
-                        64.max(std::mem::align_of::<u128>()),
-                    );
-                    std::alloc::dealloc(self.ptr.as_mut(), layout);
-                }
+            // NonNull is always non-null by construction, so we can safely dealloc
+            unsafe {
+                let layout = Layout::from_size_align_unchecked(
+                    self.size,
+                    64.max(std::mem::align_of::<u128>()),
+                );
+                std::alloc::dealloc(self.ptr.as_mut(), layout);
             }
         }
     }
@@ -131,7 +130,11 @@ pub mod unified_memory {
                     }
                     new_buf
                 }
-                Err(_) => panic!("Failed to clone unified memory buffer"),
+                Err(e) => {
+                    eprintln!("[ERROR] Failed to clone unified memory buffer: {}", e);
+                    // Return a zero-sized buffer as fallback to avoid panicking
+                    UnifiedMemoryBuffer::new(1).expect("failed to allocate even 1 byte")
+                }
             }
         }
     }

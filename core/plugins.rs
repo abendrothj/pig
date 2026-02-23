@@ -2,7 +2,7 @@ use crate::cross_platform::{PathUtils, Platform};
 use lao_plugin_api::*;
 use libloading::{Library, Symbol};
 use std::collections::HashMap;
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -21,25 +21,20 @@ impl PluginInstance {
     /// The caller must ensure that `vtable` is a valid pointer to a `PluginVTable`.
     pub unsafe fn new(library: Library, vtable: PluginVTablePtr) -> Result<Self, String> {
         unsafe {
-            println!("[DEBUG] Creating PluginInstance with vtable: {:?}", vtable);
+            tracing::debug!("Creating PluginInstance with vtable: {:?}", vtable);
 
-            // Check if vtable is valid
             if vtable.is_null() {
                 return Err("VTable pointer is null".to_string());
             }
 
             let vtable_ref = &*vtable;
-            println!("[DEBUG] VTable version: {}", vtable_ref.version);
-            println!(
-                "[DEBUG] VTable get_metadata function pointer: {:?}",
-                vtable_ref.get_metadata
-            );
+            tracing::debug!("VTable version: {}", vtable_ref.version);
 
             let metadata = (vtable_ref.get_metadata)();
-            println!("[DEBUG] Got metadata from plugin");
+            tracing::debug!("Got metadata from plugin");
 
             let info = PluginInfo::from_metadata(&metadata);
-            println!("[DEBUG] Created PluginInfo from metadata");
+            tracing::debug!("Created PluginInfo: {}", info.name);
 
             Ok(PluginInstance {
                 library: Arc::new(library),
@@ -52,6 +47,35 @@ impl PluginInstance {
 
     pub fn validate_input(&self, input: &PluginInput) -> bool {
         unsafe { ((*self.vtable).validate_input)(input) }
+    }
+
+    /// Execute the plugin with a pre-built PluginInput, returning the output string.
+    /// Encapsulates the unsafe vtable call, null checks, and memory cleanup.
+    pub fn run_plugin(&self, input: &PluginInput) -> Result<String, String> {
+        if self.vtable.is_null() {
+            return Err("Plugin vtable is null".to_string());
+        }
+        unsafe {
+            let result = ((*self.vtable).run)(input);
+            if result.text.is_null() {
+                return Err(format!("Plugin '{}' returned null output", self.info.name));
+            }
+            let output_str = CStr::from_ptr(result.text)
+                .to_string_lossy()
+                .to_string();
+            ((*self.vtable).free_output)(result);
+            Ok(output_str)
+        }
+    }
+
+    /// Convenience: build a PluginInput from a string and run the plugin.
+    pub fn run_with_text(&self, text: &str) -> Result<String, String> {
+        let c_string = CString::new(text)
+            .map_err(|e| format!("Invalid input string: {}", e))?;
+        let input = PluginInput {
+            text: c_string.into_raw(),
+        };
+        self.run_plugin(&input)
     }
 
     pub fn get_capabilities(&self) -> Vec<PluginCapability> {
@@ -104,41 +128,36 @@ impl PluginRegistry {
     pub fn default_registry() -> Self {
         let plugin_dir = PathUtils::plugin_dir();
         let plugin_dir_str = plugin_dir.to_str().unwrap_or("plugins");
-        println!("[DEBUG] PluginRegistry::default_registry() using directory: {}", plugin_dir_str);
+        tracing::debug!("PluginRegistry::default_registry() using directory: {}", plugin_dir_str);
         let registry = Self::dynamic_registry(plugin_dir_str);
-        println!("[DEBUG] PluginRegistry loaded {} plugins: {:?}", registry.plugin_count(), registry.plugin_names());
+        tracing::debug!("PluginRegistry loaded {} plugins: {:?}", registry.plugin_count(), registry.plugin_names());
         registry
     }
 
     pub fn load_plugins_from_directory(&mut self, plugin_dir: &str) {
-        println!("[DEBUG] Loading plugins from directory: {}", plugin_dir);
-        
+        tracing::debug!("Loading plugins from directory: {}", plugin_dir);
+
         if let Ok(entries) = std::fs::read_dir(plugin_dir) {
             let mut found_files = 0;
             let mut loaded_count = 0;
-            
+
             for entry in entries.filter_map(|e| e.ok()) {
                 let path = entry.path();
                 if path.is_dir() {
-                    // Load any shared libraries within the subdirectory (.so/.dylib/.dll)
                     if let Ok(files) = std::fs::read_dir(&path) {
                         for f in files.filter_map(|e| e.ok()) {
                             let fpath = f.path();
                             if let Some(ext) = fpath.extension().and_then(|s| s.to_str()) {
                                 if self.is_shared_library_extension(ext) {
                                     found_files += 1;
-                                    println!("[DEBUG] Found plugin file in subdirectory: {}", fpath.display());
+                                    tracing::debug!("Found plugin file in subdirectory: {}", fpath.display());
                                     match self.load_plugin(&fpath) {
                                         Ok(plugin) => {
                                             self.register_plugin(plugin);
                                             loaded_count += 1;
                                         }
                                         Err(e) => {
-                                            eprintln!(
-                                                "[ERROR] Failed to load plugin {}: {}",
-                                                fpath.display(),
-                                                e
-                                            );
+                                            tracing::error!("Failed to load plugin {}: {}", fpath.display(), e);
                                         }
                                     }
                                 }
@@ -146,42 +165,38 @@ impl PluginRegistry {
                         }
                     }
                 } else if self.is_shared_library_file(&path) {
-                    // Direct shared library loading across platforms
                     found_files += 1;
-                    println!("[DEBUG] Found plugin file in root: {}", path.display());
+                    tracing::debug!("Found plugin file in root: {}", path.display());
                     match self.load_plugin(&path) {
                         Ok(plugin) => {
                             self.register_plugin(plugin);
                             loaded_count += 1;
                         }
                         Err(e) => {
-                            eprintln!("[ERROR] Failed to load plugin {}: {}", path.display(), e);
+                            tracing::error!("Failed to load plugin {}: {}", path.display(), e);
                         }
                     }
                 }
             }
-            
-            println!("[DEBUG] Plugin loading summary: {} files found, {} plugins loaded", found_files, loaded_count);
+
+            tracing::debug!("Plugin loading summary: {} files found, {} plugins loaded", found_files, loaded_count);
         } else {
-            eprintln!("[ERROR] Failed to read plugin directory: {}", plugin_dir);
+            tracing::error!("Failed to read plugin directory: {}", plugin_dir);
         }
     }
 
-    /// Check if file extension is a shared library extension for current platform
     fn is_shared_library_extension(&self, ext: &str) -> bool {
         Platform::is_shared_lib_extension(ext)
     }
 
-    /// Check if file is a shared library for current platform
     fn is_shared_library_file(&self, path: &std::path::Path) -> bool {
         Platform::is_shared_lib_file(path)
     }
 
     pub fn load_plugin(&self, dll_path: &Path) -> Result<PluginInstance, String> {
         unsafe {
-            println!("[DEBUG] Loading plugin from: {}", dll_path.display());
-            
-            // Check if file exists
+            tracing::debug!("Loading plugin from: {}", dll_path.display());
+
             if !dll_path.exists() {
                 return Err(format!("Plugin file does not exist: {}", dll_path.display()));
             }
@@ -189,7 +204,7 @@ impl PluginRegistry {
             let library = Library::new(dll_path)
                 .map_err(|e| format!("Failed to load plugin library {}: {} (check if dependencies are available)", dll_path.display(), e))?;
 
-            println!("[DEBUG] Library loaded successfully");
+            tracing::debug!("Library loaded successfully");
 
             let plugin_vtable_fn: Symbol<unsafe extern "C" fn() -> PluginVTablePtr> =
                 library.get(b"plugin_vtable").map_err(|e| {
@@ -200,17 +215,14 @@ impl PluginRegistry {
                     )
                 })?;
 
-            println!("[DEBUG] Got plugin_vtable function");
+            tracing::debug!("Got plugin_vtable function");
 
             let vtable = plugin_vtable_fn();
             if vtable.is_null() {
                 return Err(format!("plugin_vtable returned null pointer for {}", dll_path.display()));
             }
-            
-            println!(
-                "[DEBUG] Called plugin_vtable function, got pointer: {:?}",
-                vtable
-            );
+
+            tracing::debug!("Called plugin_vtable function, got pointer: {:?}", vtable);
 
             PluginInstance::new(library, vtable)
         }
@@ -221,28 +233,22 @@ impl PluginRegistry {
         let version = plugin.info.version.clone();
         let dependencies = plugin.info.dependencies.clone();
 
-        // Store plugin
         self.plugins.insert(name.clone(), plugin);
 
-        // Track versions
-        let version_for_log = version.clone();
         self.plugin_versions
             .entry(name.clone())
             .or_default()
-            .push(version);
+            .push(version.clone());
 
-        // Track dependencies
         self.plugin_dependencies.insert(name.clone(), dependencies);
 
-        println!("[DIAG] Loaded plugin: {} (version: {})", name, version_for_log);
+        tracing::info!("Loaded plugin: {} (version: {})", name, version);
     }
-    
-    /// Get count of loaded plugins (for diagnostics)
+
     pub fn plugin_count(&self) -> usize {
         self.plugins.len()
     }
-    
-    /// List all loaded plugin names (for diagnostics)
+
     pub fn plugin_names(&self) -> Vec<String> {
         self.plugins.keys().cloned().collect()
     }
@@ -291,7 +297,7 @@ impl PluginRegistry {
         visited: &mut std::collections::HashSet<String>,
     ) -> Result<(), String> {
         if visited.contains(plugin_name) {
-            return Ok(()); // Already processed
+            return Ok(());
         }
 
         visited.insert(plugin_name.to_string());
@@ -325,10 +331,7 @@ impl PluginRegistry {
         new_plugin: PluginInstance,
     ) -> Result<(), String> {
         if self.plugins.contains_key(plugin_name) {
-            // Validate compatibility
             self.validate_plugin_compatibility(plugin_name)?;
-
-            // Update plugin
             self.plugins.insert(plugin_name.to_string(), new_plugin);
             Ok(())
         } else {
@@ -337,7 +340,6 @@ impl PluginRegistry {
     }
 
     pub fn remove_plugin(&mut self, plugin_name: &str) -> Result<(), String> {
-        // Check if other plugins depend on this one
         for (name, deps) in &self.plugin_dependencies {
             if name != plugin_name {
                 for dep in deps {
