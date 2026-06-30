@@ -221,9 +221,11 @@ unsafe extern "C" fn get_capabilities() -> *const c_char {
     CAPABILITIES.as_ptr() as *const c_char
 }
 
+lao_plugin_api::lao_structured_adapter!(run);
+
 #[no_mangle]
 pub static PLUGIN_VTABLE: lao_plugin_api::PluginVTable = lao_plugin_api::PluginVTable {
-    version: 1,
+    version: 2,
     name,
     run,
     free_output,
@@ -231,6 +233,8 @@ pub static PLUGIN_VTABLE: lao_plugin_api::PluginVTable = lao_plugin_api::PluginV
     get_metadata,
     validate_input,
     get_capabilities,
+    run_structured: __lao_run_structured,
+    free_result: __lao_free_result,
 };
 
 #[no_mangle]

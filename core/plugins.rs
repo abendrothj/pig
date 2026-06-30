@@ -5,6 +5,7 @@ use libloading::{Library, Symbol};
 use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString};
 use std::path::Path;
+use std::ptr::addr_of;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -12,6 +13,8 @@ pub struct PluginInstance {
     pub library: Arc<Library>,
     pub vtable: PluginVTablePtr,
     pub info: PluginInfo,
+    /// Negotiated ABI version (1 = text channel, 2 = structured results).
+    pub abi_version: u32,
 }
 
 impl PluginInstance {
@@ -27,16 +30,22 @@ impl PluginInstance {
                 return Err("VTable pointer is null".to_string());
             }
 
-            let vtable_ref = &*vtable;
-            tracing::debug!("VTable version: {}", vtable_ref.version);
-            if vtable_ref.version != LAO_PLUGIN_ABI_VERSION {
+            // Read `version` (ABI offset 0, present in every version) via a raw field
+            // read so we never form a full-struct reference to a possibly-shorter v1
+            // vtable before we know its size.
+            let version = addr_of!((*vtable).version).read();
+            tracing::debug!("VTable version: {}", version);
+            if !(LAO_PLUGIN_ABI_MIN_SUPPORTED..=LAO_PLUGIN_ABI_VERSION).contains(&version) {
                 return Err(format!(
-                    "Unsupported plugin ABI version {} (expected {})",
-                    vtable_ref.version, LAO_PLUGIN_ABI_VERSION
+                    "Unsupported plugin ABI version {} (supported: {}..={})",
+                    version, LAO_PLUGIN_ABI_MIN_SUPPORTED, LAO_PLUGIN_ABI_VERSION
                 ));
             }
 
-            let metadata = (vtable_ref.get_metadata)();
+            // `get_metadata` lives in the stable v1 prefix, so it is in-bounds for any
+            // supported version.
+            let get_metadata = addr_of!((*vtable).get_metadata).read();
+            let metadata = get_metadata();
             tracing::debug!("Got metadata from plugin");
 
             let info = PluginInfo::from_metadata(&metadata);
@@ -46,15 +55,22 @@ impl PluginInstance {
                 library: Arc::new(library),
                 vtable,
                 info,
+                abi_version: version,
             })
         }
     }
 
     pub fn validate_input(&self, input: &PluginInput) -> bool {
-        unsafe { ((*self.vtable).validate_input)(input) }
+        unsafe {
+            let validate = addr_of!((*self.vtable).validate_input).read();
+            validate(input)
+        }
     }
 
     /// Execute the plugin with a pre-built PluginInput.
+    ///
+    /// ABI v2 plugins return a structured status via `run_structured`; v1 plugins fall
+    /// back to the legacy text channel and the `error:` convention.
     pub fn run_plugin(&self, input: &PluginInput) -> PluginRunResult {
         if self.vtable.is_null() {
             return PluginRunResult::runtime_error("Plugin vtable is null");
@@ -65,8 +81,34 @@ impl PluginInstance {
                 self.info.name
             ));
         }
+        if self.abi_version >= 2 {
+            self.run_structured(input)
+        } else {
+            self.run_legacy_text(input)
+        }
+    }
+
+    fn run_structured(&self, input: &PluginInput) -> PluginRunResult {
         unsafe {
-            let result = ((*self.vtable).run)(input);
+            let run_structured = addr_of!((*self.vtable).run_structured).read();
+            let free_result = addr_of!((*self.vtable).free_result).read();
+            let result = run_structured(input);
+            let text = if result.text.is_null() {
+                None
+            } else {
+                Some(CStr::from_ptr(result.text).to_string_lossy().to_string())
+            };
+            let status = result.status;
+            free_result(result);
+            PluginRunResult::from_status_code(status, text, &self.info.name)
+        }
+    }
+
+    fn run_legacy_text(&self, input: &PluginInput) -> PluginRunResult {
+        unsafe {
+            let run = addr_of!((*self.vtable).run).read();
+            let free_output = addr_of!((*self.vtable).free_output).read();
+            let result = run(input);
             if result.text.is_null() {
                 return PluginRunResult::runtime_error(format!(
                     "Plugin '{}' returned null output",
@@ -74,7 +116,7 @@ impl PluginInstance {
                 ));
             }
             let output_str = CStr::from_ptr(result.text).to_string_lossy().to_string();
-            ((*self.vtable).free_output)(result);
+            free_output(result);
             PluginRunResult::from_plugin_text(output_str)
         }
     }
@@ -98,7 +140,8 @@ impl PluginInstance {
 
     pub fn get_capabilities(&self) -> Vec<PluginCapability> {
         unsafe {
-            let caps_ptr = ((*self.vtable).get_capabilities)();
+            let get_caps = addr_of!((*self.vtable).get_capabilities).read();
+            let caps_ptr = get_caps();
             if caps_ptr.is_null() {
                 return Vec::new();
             }

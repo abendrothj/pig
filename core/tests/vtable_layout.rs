@@ -3,11 +3,21 @@ use std::mem;
 
 #[test]
 fn test_vtable_layout() {
-    assert_eq!(LAO_PLUGIN_ABI_VERSION, 1);
+    assert_eq!(LAO_PLUGIN_ABI_VERSION, 2);
+    assert_eq!(LAO_PLUGIN_ABI_MIN_SUPPORTED, 1);
     assert_eq!(memoffset::offset_of!(PluginVTable, version), 0);
     assert!(
         memoffset::offset_of!(PluginVTable, name)
             < memoffset::offset_of!(PluginVTable, get_capabilities)
+    );
+    // ABI v2 fields are appended after the stable v1 prefix.
+    assert!(
+        memoffset::offset_of!(PluginVTable, get_capabilities)
+            < memoffset::offset_of!(PluginVTable, run_structured)
+    );
+    assert!(
+        memoffset::offset_of!(PluginVTable, run_structured)
+            < memoffset::offset_of!(PluginVTable, free_result)
     );
 
     println!(
@@ -83,6 +93,13 @@ fn test_vtable_layout() {
     unsafe extern "C" fn dummy_get_capabilities() -> *const std::ffi::c_char {
         std::ptr::null()
     }
+    unsafe extern "C" fn dummy_run_structured(_: *const PluginInput) -> PluginResult {
+        PluginResult {
+            status: LAO_STATUS_RUNTIME_ERROR,
+            text: std::ptr::null_mut(),
+        }
+    }
+    unsafe extern "C" fn dummy_free_result(_: PluginResult) {}
 
     let dummy_vtable = PluginVTable {
         version: LAO_PLUGIN_ABI_VERSION,
@@ -93,6 +110,8 @@ fn test_vtable_layout() {
         get_metadata: dummy_get_metadata,
         validate_input: dummy_validate_input,
         get_capabilities: dummy_get_capabilities,
+        run_structured: dummy_run_structured,
+        free_result: dummy_free_result,
     };
 
     println!("\nDummy vtable version: {}", dummy_vtable.version);

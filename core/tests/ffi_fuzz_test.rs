@@ -426,6 +426,15 @@ unsafe extern "C" fn dummy_get_capabilities() -> *const c_char {
     std::ptr::null()
 }
 
+unsafe extern "C" fn dummy_run_structured(_: *const PluginInput) -> PluginResult {
+    PluginResult {
+        status: LAO_STATUS_RUNTIME_ERROR,
+        text: std::ptr::null_mut(),
+    }
+}
+
+unsafe extern "C" fn dummy_free_result(_: PluginResult) {}
+
 // Adversarial get_metadata: returns all-null fields
 unsafe extern "C" fn adversarial_get_metadata_all_null() -> PluginMetadata {
     PluginMetadata {
@@ -675,7 +684,7 @@ fn fuzz_synthetic_vtable_metadata() -> Vec<FuzzResult> {
 
     for (label, get_meta_fn) in &adversarial_fns {
         let vtable = PluginVTable {
-            version: 1,
+            version: 2,
             name: dummy_name,
             run: dummy_run,
             free_output: dummy_free_output,
@@ -683,6 +692,8 @@ fn fuzz_synthetic_vtable_metadata() -> Vec<FuzzResult> {
             get_metadata: *get_meta_fn,
             validate_input: dummy_validate_input,
             get_capabilities: dummy_get_capabilities,
+            run_structured: dummy_run_structured,
+            free_result: dummy_free_result,
         };
 
         let result = panic::catch_unwind(AssertUnwindSafe(|| unsafe {

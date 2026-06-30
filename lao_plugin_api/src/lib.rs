@@ -1,10 +1,86 @@
 use std::ffi::{c_char, CStr};
 
-pub const LAO_PLUGIN_ABI_VERSION: u32 = 1;
+/// Current ABI version produced by this crate. Plugins built against this crate
+/// advertise this version in their vtable.
+pub const LAO_PLUGIN_ABI_VERSION: u32 = 2;
+
+/// Oldest ABI version the host still accepts. v1 plugins remain loadable; the host
+/// falls back to the text `run`/`free_output` path for them.
+pub const LAO_PLUGIN_ABI_MIN_SUPPORTED: u32 = 1;
+
+/// Structured result status codes (ABI v2). Kept as plain `u32` for C compatibility.
+pub const LAO_STATUS_SUCCESS: u32 = 0;
+pub const LAO_STATUS_VALIDATION_FAILED: u32 = 1;
+pub const LAO_STATUS_RUNTIME_ERROR: u32 = 2;
 
 #[repr(C)]
 pub struct PluginInput {
     pub text: *mut c_char,
+}
+
+/// Structured plugin result (ABI v2). `text` carries the output on success or the
+/// error message otherwise. Ownership: the plugin allocates `text`; the host returns
+/// it via `free_result`.
+#[repr(C)]
+pub struct PluginResult {
+    pub status: u32,
+    pub text: *mut c_char,
+}
+
+impl PluginResult {
+    /// Convert a v1-style text output into a structured result, taking ownership of
+    /// `out.text`. Status is derived from the legacy `error:`/empty convention so
+    /// existing plugin logic keeps working under the structured channel.
+    ///
+    /// # Safety
+    /// `out.text` must be either null or a valid heap `CString` pointer that the
+    /// resulting `PluginResult` now owns (freed via `free_result`).
+    pub unsafe fn from_text_output(out: PluginOutput) -> PluginResult {
+        if out.text.is_null() {
+            return PluginResult {
+                status: LAO_STATUS_RUNTIME_ERROR,
+                text: std::ptr::null_mut(),
+            };
+        }
+        let view = CStr::from_ptr(out.text).to_string_lossy();
+        let trimmed = view.trim();
+        let is_error = trimmed.is_empty() || trimmed.to_lowercase().starts_with("error:");
+        let status = if is_error {
+            LAO_STATUS_RUNTIME_ERROR
+        } else {
+            LAO_STATUS_SUCCESS
+        };
+        // Move ownership of the existing allocation into the result.
+        PluginResult {
+            status,
+            text: out.text,
+        }
+    }
+}
+
+/// Generate ABI v2 structured adapters (`__lao_run_structured` / `__lao_free_result`)
+/// that bridge a plugin's existing v1 `run` function to the structured channel.
+///
+/// Usage inside a plugin crate:
+/// ```ignore
+/// lao_plugin_api::lao_structured_adapter!(run);
+/// ```
+#[macro_export]
+macro_rules! lao_structured_adapter {
+    ($run:ident) => {
+        unsafe extern "C" fn __lao_run_structured(
+            input: *const $crate::PluginInput,
+        ) -> $crate::PluginResult {
+            let out = $run(input);
+            $crate::PluginResult::from_text_output(out)
+        }
+
+        unsafe extern "C" fn __lao_free_result(result: $crate::PluginResult) {
+            if !result.text.is_null() {
+                let _ = std::ffi::CString::from_raw(result.text);
+            }
+        }
+    };
 }
 
 #[repr(C)]
@@ -35,6 +111,9 @@ pub struct PluginMetadata {
     pub capabilities: *const c_char, // JSON array of capabilities
 }
 
+/// Plugin vtable. Fields through `get_capabilities` are the stable ABI v1 prefix.
+/// `run_structured`/`free_result` are appended in ABI v2; the host only reads them
+/// when `version >= 2`, so v1 plugins (with a shorter static) remain sound.
 #[repr(C)]
 pub struct PluginVTable {
     pub version: u32,
@@ -45,6 +124,9 @@ pub struct PluginVTable {
     pub get_metadata: unsafe extern "C" fn() -> PluginMetadata,
     pub validate_input: unsafe extern "C" fn(*const PluginInput) -> bool,
     pub get_capabilities: unsafe extern "C" fn() -> *const c_char, // JSON array of capabilities
+    // --- ABI v2 (appended) ---
+    pub run_structured: unsafe extern "C" fn(*const PluginInput) -> PluginResult,
+    pub free_result: unsafe extern "C" fn(PluginResult),
 }
 
 pub type PluginVTablePtr = *const PluginVTable;

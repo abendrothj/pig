@@ -42,6 +42,35 @@ impl PluginRunResult {
         }
     }
 
+    /// Map an ABI v2 structured status code + optional text into a host result.
+    pub fn from_status_code(status: u32, text: Option<String>, plugin_name: &str) -> Self {
+        use lao_plugin_api::{
+            LAO_STATUS_RUNTIME_ERROR, LAO_STATUS_SUCCESS, LAO_STATUS_VALIDATION_FAILED,
+        };
+        match status {
+            LAO_STATUS_SUCCESS => match text {
+                Some(t) if !t.trim().is_empty() => Self::success(t),
+                _ => Self {
+                    status: PluginRunStatus::EmptyOutput,
+                    output: None,
+                    error: Some(format!("plugin '{}' returned empty output", plugin_name)),
+                },
+            },
+            LAO_STATUS_VALIDATION_FAILED => Self::validation_failed(
+                text.unwrap_or_else(|| format!("plugin '{}' rejected input", plugin_name)),
+            ),
+            LAO_STATUS_RUNTIME_ERROR => {
+                Self::runtime_error(text.unwrap_or_else(|| {
+                    format!("plugin '{}' reported a runtime error", plugin_name)
+                }))
+            }
+            other => Self::runtime_error(format!(
+                "plugin '{}' returned unknown status code {}",
+                plugin_name, other
+            )),
+        }
+    }
+
     pub fn from_plugin_text(output: String) -> Self {
         if output.trim().is_empty() {
             return Self {
@@ -121,6 +150,40 @@ mod tests {
         let rt = PluginRunResult::runtime_error("crashed");
         assert_eq!(rt.status, PluginRunStatus::RuntimeError);
         assert_eq!(rt.display_error(), "crashed");
+    }
+
+    #[test]
+    fn from_status_code_maps_abi_v2_statuses() {
+        use lao_plugin_api::{
+            LAO_STATUS_RUNTIME_ERROR, LAO_STATUS_SUCCESS, LAO_STATUS_VALIDATION_FAILED,
+        };
+
+        let ok = PluginRunResult::from_status_code(
+            LAO_STATUS_SUCCESS,
+            Some("done".to_string()),
+            "EchoPlugin",
+        );
+        assert!(ok.is_success());
+        assert_eq!(ok.output.as_deref(), Some("done"));
+
+        let empty = PluginRunResult::from_status_code(LAO_STATUS_SUCCESS, None, "EchoPlugin");
+        assert_eq!(empty.status, PluginRunStatus::EmptyOutput);
+
+        let bad = PluginRunResult::from_status_code(
+            LAO_STATUS_VALIDATION_FAILED,
+            Some("nope".to_string()),
+            "EchoPlugin",
+        );
+        assert_eq!(bad.status, PluginRunStatus::ValidationFailed);
+        assert_eq!(bad.display_error(), "nope");
+
+        let rt = PluginRunResult::from_status_code(LAO_STATUS_RUNTIME_ERROR, None, "EchoPlugin");
+        assert_eq!(rt.status, PluginRunStatus::RuntimeError);
+        assert!(rt.display_error().contains("EchoPlugin"));
+
+        let unknown = PluginRunResult::from_status_code(999, None, "EchoPlugin");
+        assert_eq!(unknown.status, PluginRunStatus::RuntimeError);
+        assert!(unknown.display_error().contains("999"));
     }
 
     #[test]

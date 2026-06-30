@@ -1,4 +1,7 @@
-use lao_plugin_api::{PluginInput, PluginMetadata, PluginOutput, PluginVTable, PluginVTablePtr};
+use lao_plugin_api::{
+    PluginInput, PluginMetadata, PluginOutput, PluginResult, PluginVTable, PluginVTablePtr,
+    LAO_STATUS_SUCCESS, LAO_STATUS_VALIDATION_FAILED,
+};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
@@ -95,9 +98,40 @@ unsafe extern "C" fn get_capabilities() -> *const c_char {
     CAPABILITIES.as_ptr() as *const c_char
 }
 
+/// Native ABI v2 entry point: returns real status codes instead of the `error:`
+/// text convention.
+unsafe extern "C" fn run_structured(input: *const PluginInput) -> PluginResult {
+    if input.is_null() || (*input).text.is_null() {
+        let msg = CString::new("null input").expect("static message");
+        return PluginResult {
+            status: LAO_STATUS_VALIDATION_FAILED,
+            text: msg.into_raw(),
+        };
+    }
+    let s = CStr::from_ptr((*input).text).to_string_lossy();
+    if s.trim().is_empty() || s.contains("not:") || s.contains("{") || s.contains("}") {
+        let msg = CString::new("invalid input for Echo plugin").expect("static message");
+        return PluginResult {
+            status: LAO_STATUS_VALIDATION_FAILED,
+            text: msg.into_raw(),
+        };
+    }
+    let out = CString::new(s.as_ref()).unwrap_or_else(|_| CString::new("").expect("empty"));
+    PluginResult {
+        status: LAO_STATUS_SUCCESS,
+        text: out.into_raw(),
+    }
+}
+
+unsafe extern "C" fn free_result(result: PluginResult) {
+    if !result.text.is_null() {
+        let _ = CString::from_raw(result.text);
+    }
+}
+
 #[no_mangle]
 pub static PLUGIN_VTABLE: PluginVTable = PluginVTable {
-    version: 1,
+    version: 2,
     name,
     run,
     free_output,
@@ -105,6 +139,8 @@ pub static PLUGIN_VTABLE: PluginVTable = PluginVTable {
     get_metadata,
     validate_input,
     get_capabilities,
+    run_structured,
+    free_result,
 };
 
 #[no_mangle]
