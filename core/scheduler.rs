@@ -3,11 +3,67 @@ use crate::workflow_exec::run_workflow_yaml;
 use crate::workflow_state::{WorkflowSchedule, WorkflowState, WorkflowStatus};
 use crate::workflow_types::StepLog;
 use std::collections::HashMap;
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
+
+/// How long a `run-due` lock can exist before it is considered stale and reclaimed.
+const RUN_DUE_LOCK_STALE_SECS: u64 = 3600;
+
+/// Outcome of running each due workflow: its id paired with the run result.
+pub type RunDueOutcome = Vec<(String, Result<Vec<StepLog>, String>)>;
 
 pub struct WorkflowScheduler {
     state_manager: WorkflowStateManager,
     scheduled_workflows: HashMap<String, ScheduledWorkflow>,
+    state_dir: PathBuf,
+}
+
+/// Advisory cross-process lock that prevents overlapping `run-due` invocations
+/// (e.g. two cron ticks) from double-running scheduled workflows. The lock is a file
+/// in the state directory created atomically; it is removed on drop.
+pub struct RunDueLock {
+    path: PathBuf,
+}
+
+impl RunDueLock {
+    pub fn acquire(state_dir: &Path) -> Result<Option<Self>, String> {
+        use std::fs::OpenOptions;
+        use std::io::ErrorKind;
+
+        let path = state_dir.join(".run-due.lock");
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                let _ = writeln!(file, "pid={}", std::process::id());
+                Ok(Some(Self { path }))
+            }
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                let stale = fs::metadata(&path)
+                    .and_then(|m| m.modified())
+                    .map(|modified| {
+                        modified
+                            .elapsed()
+                            .map(|age| age > Duration::from_secs(RUN_DUE_LOCK_STALE_SECS))
+                            .unwrap_or(false)
+                    })
+                    .unwrap_or(false);
+                if stale {
+                    tracing::warn!("Reclaiming stale run-due lock at {}", path.display());
+                    let _ = fs::remove_file(&path);
+                    return Self::acquire(state_dir);
+                }
+                Ok(None)
+            }
+            Err(e) => Err(format!("failed to acquire run-due lock: {}", e)),
+        }
+    }
+}
+
+impl Drop for RunDueLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -24,6 +80,7 @@ impl WorkflowScheduler {
         let mut scheduler = Self {
             state_manager,
             scheduled_workflows: HashMap::new(),
+            state_dir: PathBuf::from(state_dir),
         };
         scheduler.reload_scheduled_workflows();
         Ok(scheduler)
@@ -153,7 +210,16 @@ impl WorkflowScheduler {
         Ok(())
     }
 
-    pub fn run_due_workflows(&mut self) -> Vec<(String, Result<Vec<StepLog>, String>)> {
+    /// Run due workflows under an advisory lock so overlapping invocations cannot
+    /// double-run schedules. Returns `Err` if another `run-due` holds the lock.
+    pub fn run_due_workflows_guarded(&mut self) -> Result<RunDueOutcome, String> {
+        match RunDueLock::acquire(&self.state_dir)? {
+            Some(_lock) => Ok(self.run_due_workflows()),
+            None => Err("another run-due invocation is in progress".to_string()),
+        }
+    }
+
+    pub fn run_due_workflows(&mut self) -> RunDueOutcome {
         let due = self.get_due_workflows();
         let mut results = Vec::new();
 
@@ -262,6 +328,38 @@ mod tests {
             max_runs: None,
             run_count: 0,
         }
+    }
+
+    #[test]
+    fn run_due_lock_is_exclusive_then_released() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        // First acquisition succeeds.
+        let lock = RunDueLock::acquire(dir.path()).unwrap();
+        assert!(lock.is_some(), "first lock acquisition should succeed");
+
+        // Second acquisition is blocked while the first is held.
+        let blocked = RunDueLock::acquire(dir.path()).unwrap();
+        assert!(blocked.is_none(), "second acquisition should be blocked");
+
+        // Releasing the first lock allows re-acquisition.
+        drop(lock);
+        drop(blocked);
+        let reacquired = RunDueLock::acquire(dir.path()).unwrap();
+        assert!(
+            reacquired.is_some(),
+            "lock should be re-acquirable after release"
+        );
+    }
+
+    #[test]
+    fn run_due_guarded_blocks_when_locked() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let mut scheduler = WorkflowScheduler::new(dir.path().to_str().unwrap()).unwrap();
+        let held = RunDueLock::acquire(dir.path()).unwrap();
+        assert!(held.is_some());
+
+        let result = scheduler.run_due_workflows_guarded();
+        assert!(result.is_err(), "guarded run should fail while lock held");
     }
 
     #[test]

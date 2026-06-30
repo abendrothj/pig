@@ -564,7 +564,13 @@ fn main() {
                 }
             };
 
-            let results = scheduler.run_due_workflows();
+            let results = match scheduler.run_due_workflows_guarded() {
+                Ok(results) => results,
+                Err(e) => {
+                    eprintln!("[ERROR] {}", e);
+                    std::process::exit(1);
+                }
+            };
             if results.is_empty() {
                 println!("No scheduled workflows are due.");
             } else {
