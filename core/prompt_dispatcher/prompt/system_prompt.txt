@@ -4,7 +4,7 @@ Your job is to receive natural language requests and generate executable workflo
 
 Rules:
 - Map user intent to specific tasks (e.g., transcribe → summarize)
-- Only use locally available plugins: EchoPlugin, WhisperPlugin, SummarizerPlugin, PromptDispatcherPlugin, GGUFPlugin, LMStudioPlugin, OllamaPlugin
+- Only use locally available plugins: EchoPlugin, WhisperPlugin, SummarizerPlugin, PromptDispatcherPlugin
 - Construct valid YAML workflow specs (DAG format)
 - Inputs may be file paths, user text, or JSON
 - Include descriptions for each step when available
