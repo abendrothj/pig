@@ -3,7 +3,7 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
 unsafe extern "C" fn name() -> *const c_char {
-    CString::new("EchoPlugin").unwrap().into_raw()
+    c"EchoPlugin".as_ptr()
 }
 
 unsafe extern "C" fn run(input: *const PluginInput) -> PluginOutput {

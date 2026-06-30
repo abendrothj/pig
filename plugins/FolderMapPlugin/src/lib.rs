@@ -8,7 +8,7 @@ const CAPABILITIES_JSON: &str = "[{\"name\":\"map-folder\",\"description\":\"Rec
 const MAX_ENTRIES: usize = 10_000;
 
 unsafe extern "C" fn name() -> *const c_char {
-    CString::new("FolderMapPlugin").unwrap().into_raw()
+    c"FolderMapPlugin".as_ptr()
 }
 
 unsafe extern "C" fn run(input: *const PluginInput) -> PluginOutput {

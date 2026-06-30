@@ -4,9 +4,12 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
 const CAPABILITIES_JSON: &str = "[{\"name\":\"extract-regex\",\"description\":\"Extract regex matches from text\",\"input_type\":\"Any\",\"output_type\":\"Text\"}]\0";
+const MAX_PATTERN_BYTES: usize = 4 * 1024;
+const MAX_TEXT_BYTES: usize = 1024 * 1024;
+const MAX_MATCHES: usize = 10_000;
 
 unsafe extern "C" fn name() -> *const c_char {
-    CString::new("RegexExtractPlugin").unwrap().into_raw()
+    c"RegexExtractPlugin".as_ptr()
 }
 
 unsafe extern "C" fn run(input: *const PluginInput) -> PluginOutput {
@@ -33,7 +36,16 @@ fn extract(raw: &str) -> Result<String, String> {
     if pattern.is_empty() {
         return Err("missing regex pattern on the first line".to_string());
     }
+    if pattern.len() > MAX_PATTERN_BYTES {
+        return Err(format!(
+            "regex pattern exceeds {} byte limit",
+            MAX_PATTERN_BYTES
+        ));
+    }
     let text = lines.next().unwrap_or("");
+    if text.len() > MAX_TEXT_BYTES {
+        return Err(format!("regex text exceeds {} byte limit", MAX_TEXT_BYTES));
+    }
 
     let re = Regex::new(pattern).map_err(|e| format!("invalid regex: {}", e))?;
 
@@ -47,6 +59,9 @@ fn extract(raw: &str) -> Result<String, String> {
         };
         if let Some(v) = value {
             matches.push(v.to_string());
+            if matches.len() > MAX_MATCHES {
+                return Err(format!("regex match count exceeds {} limit", MAX_MATCHES));
+            }
         }
     }
 
@@ -151,5 +166,12 @@ mod tests {
     fn errors_on_invalid_regex() {
         let err = extract("(unclosed\nsome text");
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn errors_when_too_many_matches() {
+        let text = "a".repeat(MAX_MATCHES + 1);
+        let err = extract(&format!("a\n{}", text)).unwrap_err();
+        assert!(err.contains("match count"));
     }
 }

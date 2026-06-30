@@ -6,7 +6,7 @@ use std::os::raw::c_char;
 const CAPABILITIES_JSON: &str = "[{\"name\":\"extract-json\",\"description\":\"Extract a value from a JSON document using a dotted path selector\",\"input_type\":\"Any\",\"output_type\":\"Text\"}]\0";
 
 unsafe extern "C" fn name() -> *const c_char {
-    CString::new("JsonExtractPlugin").unwrap().into_raw()
+    c"JsonExtractPlugin".as_ptr()
 }
 
 unsafe extern "C" fn run(input: *const PluginInput) -> PluginOutput {

@@ -6,7 +6,7 @@ use std::os::raw::c_char;
 const CAPABILITIES_JSON: &str = "[{\"name\":\"markdown-report\",\"description\":\"Format text into a Markdown report, optionally writing to disk\",\"input_type\":\"Any\",\"output_type\":\"Text\"}]\0";
 
 unsafe extern "C" fn name() -> *const c_char {
-    CString::new("MarkdownReportPlugin").unwrap().into_raw()
+    c"MarkdownReportPlugin".as_ptr()
 }
 
 unsafe extern "C" fn run(input: *const PluginInput) -> PluginOutput {

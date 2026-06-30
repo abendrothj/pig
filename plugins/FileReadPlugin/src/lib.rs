@@ -5,7 +5,7 @@ use std::os::raw::c_char;
 const CAPABILITIES_JSON: &str = "[{\"name\":\"read-file\",\"description\":\"Read a file from disk and return its contents as text\",\"input_type\":\"Any\",\"output_type\":\"Text\"}]\0";
 
 unsafe extern "C" fn name() -> *const c_char {
-    CString::new("FileReadPlugin").unwrap().into_raw()
+    c"FileReadPlugin".as_ptr()
 }
 
 unsafe extern "C" fn run(input: *const PluginInput) -> PluginOutput {

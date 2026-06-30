@@ -6,7 +6,7 @@ use std::process::Command;
 const CAPABILITIES_JSON: &str = "[{\"name\":\"run-shell\",\"description\":\"Run a trusted shell command and capture stdout\",\"input_type\":\"Any\",\"output_type\":\"Text\"}]\0";
 
 unsafe extern "C" fn name() -> *const c_char {
-    CString::new("ShellCommandPlugin").unwrap().into_raw()
+    c"ShellCommandPlugin".as_ptr()
 }
 
 unsafe extern "C" fn run(input: *const PluginInput) -> PluginOutput {
