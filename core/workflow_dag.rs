@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::fs;
-use std::process::Command;
 
 use lao_plugin_api::{PluginInputType, PluginOutputType};
 
@@ -10,37 +9,6 @@ use crate::workflow_types::*;
 pub fn load_workflow_yaml(path: &str) -> Result<Workflow, String> {
     let yaml_str = fs::read_to_string(path).map_err(|e| e.to_string())?;
     serde_yaml::from_str::<Workflow>(&yaml_str).map_err(|e| e.to_string())
-}
-
-pub fn run_model_runner(runner: &str, params: serde_yaml::Value) -> Result<String, String> {
-    let mut cmd = Command::new(runner);
-    if runner == "whisper" {
-        if let Some(input) = params.get("input").and_then(|v| v.as_str()) {
-            cmd.arg(input);
-        }
-    } else if runner == "ollama" {
-        if let Some(model) = params.get("model").and_then(|v| v.as_str()) {
-            cmd.arg("run").arg(model);
-        }
-        if let Some(prompt) = params.get("prompt").and_then(|v| v.as_str()) {
-            cmd.arg(prompt);
-        }
-    } else {
-        for (k, v) in params.as_mapping().unwrap_or(&serde_yaml::Mapping::new()) {
-            cmd.arg(format!("--{k:?}")).arg(format!("{v:?}"));
-        }
-    }
-    let output = cmd
-        .output()
-        .map_err(|e| format!("Failed to run {runner}: {e}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "{} failed: {}",
-            runner,
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 pub fn build_dag(steps: &[WorkflowStep]) -> Result<Vec<DagNode>, String> {

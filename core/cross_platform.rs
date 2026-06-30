@@ -141,18 +141,21 @@ impl PathUtils {
         // Get current directory
         let current_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
-        // Try multiple levels up to find plugins directory
-        // This handles cases where we're in subdirectories like ui/lao-ui/, core/, etc.
+        // Try multiple levels up to find plugins directory.
+        // This handles cases where the CLI is run from subdirectories like core/.
         let mut search_dir = current_dir.clone();
         let max_depth = 5; // Don't search too far up
-        
+
         for _ in 0..max_depth {
             let plugins_path = search_dir.join("plugins");
             if plugins_path.exists() {
-                tracing::debug!("PathUtils::plugin_dir() found plugins at: {}", plugins_path.display());
+                tracing::debug!(
+                    "PathUtils::plugin_dir() found plugins at: {}",
+                    plugins_path.display()
+                );
                 return plugins_path;
             }
-            
+
             // Try parent directory
             if let Some(parent) = search_dir.parent() {
                 search_dir = parent.to_path_buf();
@@ -160,10 +163,13 @@ impl PathUtils {
                 break;
             }
         }
-        
+
         // Fallback: use plugins/ relative to current directory
         let fallback = current_dir.join("plugins");
-        tracing::debug!("PathUtils::plugin_dir() using fallback: {}", fallback.display());
+        tracing::debug!(
+            "PathUtils::plugin_dir() using fallback: {}",
+            fallback.display()
+        );
         fallback
     }
 
