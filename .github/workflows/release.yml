@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build plugins
+        shell: bash
+        run: bash scripts/build-plugins.sh
+
+      - name: Build CLI (release)
+        run: cargo build --release --bin lao-cli
+
+      - name: Package artifacts
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          STAGING="lao-${VERSION}-${{ matrix.target }}"
+          mkdir -p "${STAGING}/bin" "${STAGING}/plugins"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp target/release/lao-cli.exe "${STAGING}/bin/"
+          else
+            cp target/release/lao-cli "${STAGING}/bin/"
+          fi
+          find plugins -path '*/target/release/lib*' \( -name '*.so' -o -name '*.dylib' -o -name '*.dll' \) -print | while read -r lib; do
+            plugin_name="$(echo "$lib" | cut -d/ -f2)"
+            mkdir -p "${STAGING}/plugins/${plugin_name}"
+            cp "$lib" "${STAGING}/plugins/${plugin_name}/"
+          done
+          cp README.md lao.toml.example "${STAGING}/"
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            powershell Compress-Archive -Path "${STAGING}/*" -DestinationPath "lao-${VERSION}-${{ matrix.target }}.zip"
+          else
+            tar czf "lao-${VERSION}-${{ matrix.target }}.tar.gz" "${STAGING}"
+          fi
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: lao-*-${{ matrix.target }}.*

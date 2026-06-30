@@ -26,6 +26,12 @@ jobs:
       with:
         components: rustfmt, clippy
 
+    - name: Install cargo-deny
+      run: cargo install cargo-deny --locked
+
+    - name: Dependency policy (cargo-deny)
+      run: cargo deny check
+
     - name: Cache cargo registry
       uses: actions/cache@v4
       with:
@@ -38,6 +44,14 @@ jobs:
         path: target
         key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
+    - name: Validate docs layout
+      run: |
+        test -f CONTRIBUTING.md
+        test -f SECURITY.md
+        test -f CHANGELOG.md
+        test -f docs/plugin-api.md
+        test -f docs/adr/0005-out-of-process-plugin-host.md
+
     - name: Check Formatting
       run: cargo fmt -- --check
 
@@ -47,6 +61,12 @@ jobs:
     - name: Build plugins
       run: bash scripts/build-plugins.sh
 
+    - name: Run CLI Smoke Tests
+      run: |
+        cargo run --bin lao-cli -- plugin-list
+        cargo run --bin lao-cli -- validate workflows/test_loop.yaml
+        cargo run --bin lao-cli -- run workflows/test_loop.yaml
+
     - name: Run Tests
       run: cargo test --workspace
 
@@ -54,6 +74,9 @@ jobs:
       run: cargo test -p lao-orchestrator-core --test ffi_fuzz_test
       env:
         LAO_FUZZ_SEED: 42
+
+    - name: Release Build Dry Run
+      run: cargo build --workspace --release
 
   ffi-sanitizers:
     name: FFI Sanitizers (${{ matrix.sanitizer }})
