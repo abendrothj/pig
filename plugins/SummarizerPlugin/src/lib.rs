@@ -38,7 +38,10 @@ unsafe extern "C" fn run(input: *const PluginInput) -> PluginOutput {
                             "error: SummarizerPlugin received invalid JSON response from Ollama. Expected 'response' field.".to_string()
                         }
                     }
-                    Err(e) => format!("error: SummarizerPlugin failed to parse JSON response: {}", e),
+                    Err(e) => format!(
+                        "error: SummarizerPlugin failed to parse JSON response: {}",
+                        e
+                    ),
                 }
             } else {
                 format!("error: SummarizerPlugin received HTTP error {} from Ollama. Make sure Ollama is running on localhost:11434.", resp.status())
@@ -52,10 +55,12 @@ unsafe extern "C" fn run(input: *const PluginInput) -> PluginOutput {
             }
         }
     };
-    let out = CString::new(summary).unwrap_or_else(|_| {
-        // Fallback if summary contains null bytes
-        CString::new("error: SummarizerPlugin output contains invalid characters").unwrap()
-    }).into_raw();
+    let out = CString::new(summary)
+        .unwrap_or_else(|_| {
+            // Fallback if summary contains null bytes
+            CString::new("error: SummarizerPlugin output contains invalid characters").unwrap()
+        })
+        .into_raw();
     PluginOutput { text: out }
 }
 

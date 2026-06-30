@@ -1,9 +1,9 @@
 use lao_plugin_api::{PluginInput, PluginMetadata, PluginOutput, PluginVTablePtr};
+use std::env;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
-use std::process::Command;
-use std::env;
 use std::path::Path;
+use std::process::Command;
 
 unsafe extern "C" fn name() -> *const c_char {
     c"WhisperPlugin".as_ptr()
@@ -17,7 +17,7 @@ fn find_whisper_binary() -> Option<String> {
             return Some(path);
         }
     }
-    
+
     // Check PATH using `which` command (Unix/macOS)
     #[cfg(unix)]
     {
@@ -34,7 +34,7 @@ fn find_whisper_binary() -> Option<String> {
             }
         }
     }
-    
+
     // Check common file system locations
     let candidates = vec![
         "./whisper.cpp",
@@ -46,7 +46,7 @@ fn find_whisper_binary() -> Option<String> {
         "~/.local/bin/whisper.cpp",
         "~/.local/bin/whisper-cpp",
     ];
-    
+
     for candidate in candidates {
         // Expand ~ to home directory
         let expanded = if candidate.starts_with("~/") {
@@ -58,13 +58,13 @@ fn find_whisper_binary() -> Option<String> {
         } else {
             candidate.to_string()
         };
-        
+
         // Check if it exists
         if Path::new(&expanded).exists() {
             return Some(expanded);
         }
     }
-    
+
     None
 }
 
@@ -76,22 +76,21 @@ unsafe extern "C" fn run(input: *const PluginInput) -> PluginOutput {
     }
     let c_str = CStr::from_ptr((*input).text);
     let audio_path = c_str.to_string_lossy();
-    
+
     // Find whisper binary
     let whisper_bin = match find_whisper_binary() {
         Some(path) => path,
         None => {
-            let error_msg = format!(
-                "whisper.cpp binary not found. Please install whisper.cpp or set WHISPER_CPP_PATH environment variable.\n\
+            let error_msg = "whisper.cpp binary not found. Please install whisper.cpp or set WHISPER_CPP_PATH environment variable.\n\
                 Common locations checked: ./whisper.cpp, whisper.cpp (in PATH), /usr/local/bin/whisper.cpp\n\
                 Install from: https://github.com/ggerganov/whisper.cpp"
-            );
+                .to_string();
             return PluginOutput {
                 text: CString::new(error_msg).unwrap().into_raw(),
             };
         }
     };
-    
+
     let output = Command::new(&whisper_bin).arg(&*audio_path).output();
     let text = match output {
         Ok(out) if out.status.success() => {
