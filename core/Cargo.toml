@@ -1,9 +1,9 @@
 [package]
 name = "lao-orchestrator-core"
-version = "0.1.20"
+version.workspace = true
 description = "Core DAG engine and backend for LAO Orchestrator"
-authors = ["Jake Abendroth <contact@jakea.net>"]
-edition = "2021"
+authors.workspace = true
+edition.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -19,6 +19,7 @@ serde_yaml = "0.9"
 libloading = "0.8"
 lao_plugin_api = { path = "../lao_plugin_api" }
 tracing = "0.1"
+toml = "1.1.2"
 
 [dev-dependencies]
 serial_test = "2.0"

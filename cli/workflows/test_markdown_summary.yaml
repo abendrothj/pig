@@ -1,6 +1,0 @@
-workflow: "Markdown Summary"
-steps:
-  - run: EchoPlugin
-    input: "doc.md"
-  - run: SummarizerPlugin
-    input_from: step1

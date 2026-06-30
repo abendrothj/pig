@@ -1,9 +1,9 @@
 [package]
 name = "json_extract_plugin"
-version = "0.1.20"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Extracts a value from a JSON document using a dotted path selector"
-authors = ["Jake Abendroth <contact@jakea.net>"]
+authors.workspace = true
 
 [dependencies]
 lao_plugin_api = { path = "../../lao_plugin_api" }

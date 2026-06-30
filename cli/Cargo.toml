@@ -1,9 +1,9 @@
 [package]
 name = "lao-cli"
-version = "0.1.20"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Command-line interface for LAO - Local AI Orchestrator"
-authors = ["Jake Abendroth <contact@jakea.net>"]
+authors.workspace = true
 
 [dependencies]
 clap = { version = "4.0", features = ["derive"] }
@@ -12,6 +12,7 @@ lao_plugin_api = { path = "../lao_plugin_api" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 uuid = { version = "1.0", features = ["v4"] }
 
 [[bin]]

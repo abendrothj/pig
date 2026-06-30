@@ -1,9 +1,9 @@
 [package]
 name = "file_read_plugin"
-version = "0.1.20"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Reads a file from disk and returns its contents as text"
-authors = ["Jake Abendroth <contact@jakea.net>"]
+authors.workspace = true
 
 [dependencies]
 lao_plugin_api = { path = "../../lao_plugin_api" }

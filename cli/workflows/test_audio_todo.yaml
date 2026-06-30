@@ -1,6 +1,0 @@
-workflow: "Audio Todo"
-steps:
-  - run: WhisperPlugin
-    input: "meeting.wav"
-  - run: SummarizerPlugin
-    input_from: step1

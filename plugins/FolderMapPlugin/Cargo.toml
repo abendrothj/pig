@@ -1,9 +1,9 @@
 [package]
 name = "folder_map_plugin"
-version = "0.1.20"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Recursively lists files under a directory as a newline-separated map"
-authors = ["Jake Abendroth <contact@jakea.net>"]
+authors.workspace = true
 
 [dependencies]
 lao_plugin_api = { path = "../../lao_plugin_api" }

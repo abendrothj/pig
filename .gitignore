@@ -4,7 +4,8 @@ Thumbs.db
 
 # Rust
 **/target/
-Cargo.lock
+**/Cargo.lock
+!/Cargo.lock
 
 # Compiled plugin binaries
 plugins/*.dylib
@@ -29,6 +30,8 @@ plugins/*.dll
 .env
 .env.*
 !.env.example
+lao.toml
+!lao.toml.example
 
 # Editor
 .vscode/
@@ -43,5 +46,7 @@ yarn-error.log*
 pnpm-debug.log*
 
 # Runtime
+cache/
+workflow_states/
 plugins_runtime/
 .whisper_cpp_path

@@ -1,9 +1,9 @@
 [package]
 name = "regex_extract_plugin"
-version = "0.1.20"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Extracts regex matches from text"
-authors = ["Jake Abendroth <contact@jakea.net>"]
+authors.workspace = true
 
 [dependencies]
 lao_plugin_api = { path = "../../lao_plugin_api" }

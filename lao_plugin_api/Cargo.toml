@@ -1,9 +1,9 @@
 [package]
 name = "lao_plugin_api"
-version = "0.1.20"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "API for LAO plugins"
-authors = ["Jake Abendroth <contact@jakea.net>"]
+authors.workspace = true
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }

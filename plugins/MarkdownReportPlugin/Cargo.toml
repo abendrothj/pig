@@ -1,9 +1,9 @@
 [package]
 name = "markdown_report_plugin"
-version = "0.1.20"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Formats text into a Markdown report, optionally writing it to disk"
-authors = ["Jake Abendroth <contact@jakea.net>"]
+authors.workspace = true
 
 [dependencies]
 lao_plugin_api = { path = "../../lao_plugin_api" }

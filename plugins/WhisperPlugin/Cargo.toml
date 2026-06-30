@@ -1,9 +1,9 @@
 [package]
 name = "whisper_plugin"
-version = "0.1.20"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Transcribes audio using whisper.cpp"
-authors = ["Jake Abendroth <contact@jakea.net>"]
+authors.workspace = true
 
 [lib]
 crate-type = ["cdylib"]
