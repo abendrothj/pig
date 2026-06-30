@@ -12,11 +12,11 @@ A plugin that summarizes input text. Useful for condensing transcripts, document
 ```yaml
 workflow: "Summarize Meeting"
 steps:
-  - run: Whisper
+  - run: WhisperPlugin
     input: "meeting.wav"
-  - run: Summarizer
-    input_from: Whisper
+  - run: SummarizerPlugin
+    input_from: step1
 ```
 
 ## Usage
-Reference the plugin by name in your workflow YAML as shown above. The input can come from a previous step (e.g., Whisper) or be provided directly. 
+Reference the plugin by name in your workflow YAML as shown above. The input can come from a previous step (for example, `WhisperPlugin`) or be provided directly. 

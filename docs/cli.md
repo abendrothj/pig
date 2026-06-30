@@ -7,43 +7,42 @@ lao <COMMAND> [OPTIONS]
 
 ## Commands
 - `run <workflow.yaml> [--dry-run]`  
-  Run a workflow. Use `--dry-run` to simulate execution and show expected IO types.
+  Run a workflow. Use `--dry-run` to validate plugin availability without executing steps.
 - `validate <workflow.yaml>`  
   Validate workflow structure, types, and plugin availability.
 - `plugin-list`  
-  List all available plugins, their IO signatures, and descriptions.
-- `prompt <prompt>`  
-  Generate and run a workflow from a natural language prompt using the local LLM.
+  List all dynamically loaded plugins.
+- `new-workflow <name> [--output <file>]`  
+  Scaffold a starter workflow YAML file.
+- `prompt <prompt> [--output <file>]`  
+  Generate a workflow from a natural language prompt using `PromptDispatcherPlugin`.
 - `validate-prompts [--path <json>] [--fail-fast] [--verbose]`  
   Validate prompt-to-workflow generation using the prompt library.
-- (Planned) `explain plugin <name>`  
-  Show detailed info and examples for a plugin.
+- `list-workflows`, `view-workflow <name>`, `delete-workflow <name>`  
+  Manage workflow YAML files under `workflows/`.
+- `explain-plugin <name>`  
+  Show manifest details and examples for a bundled plugin.
+- `schedule`, `unschedule`, `list-scheduled`, `status`, `cleanup`  
+  Manage persisted workflow schedule and execution state metadata.
 
 ## Execution Modes
 
 ### Sequential Execution
 - Steps execute one at a time, even if they're independent
 - Use for debugging, testing, or when strict ordering is required
-- Enabled via `--debug` flag or Debug mode in UI
+- Use the sequential workflow runner APIs when embedding the core crate.
 
-### Parallel Execution (Default)
+### Parallel Execution
 - Automatically detects and executes independent steps concurrently
 - Steps are grouped into execution levels based on dependencies
 - Steps within the same level run in parallel; levels execute sequentially
-- Significantly faster for workflows with independent branches
-- Enabled automatically when workflow has parallelizable steps
-
-### UI Execution
-- The desktop UI automatically detects parallelism and uses the appropriate execution mode
-- Single "Run" button changes to "Run (Parallel)" when parallel execution will be used
-- Debug mode checkbox forces sequential execution for debugging
-- Real-time event streaming shows step progress and execution levels
+- Available through `run_workflow_yaml_parallel_with_callback` in the core crate.
 
 ## Examples
 ```
-lao run workflows/test.yaml
-lao run workflows/test.yaml --dry-run
-lao validate workflows/test.yaml
+lao run workflows/test_loop.yaml
+lao run workflows/test_loop.yaml --dry-run
+lao validate workflows/test_loop.yaml
 lao plugin-list
 lao prompt "Summarize this audio and tag action items"
 lao validate-prompts --path core/prompt_dispatcher/prompt/prompt_library.json --verbose

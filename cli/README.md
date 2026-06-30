@@ -7,7 +7,7 @@ This is the dedicated command-line interface for the LAO Orchestrator.
 ```
 cargo run --bin lao-cli run workflows/test.yaml
 cargo run --bin lao-cli validate workflows/test.yaml
-cargo run --bin lao-cli plugin list
+cargo run --bin lao-cli plugin-list
 cargo run --bin lao-cli new-workflow myflow --output workflows/myflow.yaml
 cargo run --bin lao-cli prompt "Summarize this audio" --output workflows/audio_summary.yaml
 cargo run --bin lao-cli list-workflows
