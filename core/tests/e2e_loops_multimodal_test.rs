@@ -24,7 +24,9 @@ fn check_plugins_available(required_plugins: &[&str]) -> bool {
     true
 }
 
-fn run_workflow_parallel(workflow: &Workflow) -> (Vec<lao_orchestrator_core::StepLog>, Vec<StepEvent>) {
+fn run_workflow_parallel(
+    workflow: &Workflow,
+) -> (Vec<lao_orchestrator_core::StepLog>, Vec<StepEvent>) {
     let path = format!("temp_e2e_{}.yaml", std::process::id());
     fs::write(&path, serde_yaml::to_string(workflow).unwrap()).unwrap();
 
@@ -97,8 +99,8 @@ fn test_loop_executes_all_iterations() {
 
     // The output should be a JSON array with 3 results
     let output = logs[0].output.as_ref().expect("Should have output");
-    let results: Vec<String> = serde_json::from_str(output)
-        .expect("Output should be valid JSON array");
+    let results: Vec<String> =
+        serde_json::from_str(output).expect("Output should be valid JSON array");
     assert_eq!(results.len(), 3, "Should have 3 iteration results");
 
     // Validation should indicate loop execution
@@ -232,10 +234,7 @@ fn test_loop_output_feeds_next_step() {
 
     // Step 1 should be the loop
     let step1_validation = logs[0].validation.as_ref().unwrap();
-    assert!(
-        step1_validation.contains("loop"),
-        "Step 1 should be a loop"
-    );
+    assert!(step1_validation.contains("loop"), "Step 1 should be a loop");
 
     // Step 2 should have received input from step 1
     assert!(
@@ -271,14 +270,8 @@ fn test_modality_from_mime_type() {
         Modality::from_mime_type("audio/mpeg"),
         Some(Modality::Audio)
     );
-    assert_eq!(
-        Modality::from_mime_type("image/png"),
-        Some(Modality::Image)
-    );
-    assert_eq!(
-        Modality::from_mime_type("video/mp4"),
-        Some(Modality::Video)
-    );
+    assert_eq!(Modality::from_mime_type("image/png"), Some(Modality::Image));
+    assert_eq!(Modality::from_mime_type("video/mp4"), Some(Modality::Video));
     assert_eq!(Modality::from_mime_type("text/plain"), Some(Modality::Text));
     assert_eq!(
         Modality::from_mime_type("application/json"),
@@ -323,10 +316,7 @@ fn test_workflow_with_modality_annotations() {
     let (logs, _events) = run_workflow_parallel(&workflow);
 
     assert_eq!(logs.len(), 2, "Both steps should execute");
-    assert!(
-        logs.iter().all(|l| l.error.is_none()),
-        "No errors expected"
-    );
+    assert!(logs.iter().all(|l| l.error.is_none()), "No errors expected");
 }
 
 // ========================
@@ -437,7 +427,10 @@ fn test_conditional_then_loop_pipeline() {
     );
 
     // Step 3 should be a loop
-    let step3_validation = logs[2].validation.as_ref().expect("Step 3 should have validation");
+    let step3_validation = logs[2]
+        .validation
+        .as_ref()
+        .expect("Step 3 should have validation");
     assert!(
         step3_validation.contains("loop"),
         "Step 3 should be a loop, got: {}",
@@ -500,7 +493,10 @@ fn test_conditional_skips_then_loop_still_runs() {
     assert_eq!(logs.len(), 3, "All 3 steps should produce logs");
 
     // Find step2 by step_id (parallel executor may reorder logs)
-    let step2 = logs.iter().find(|l| l.step_id == "step2").expect("step2 should exist");
+    let step2 = logs
+        .iter()
+        .find(|l| l.step_id == "step2")
+        .expect("step2 should exist");
     let was_skipped = step2.validation.as_deref() == Some("skipped")
         || step2.output.as_deref() == Some("skipped due to condition");
     assert!(
@@ -510,9 +506,15 @@ fn test_conditional_skips_then_loop_still_runs() {
     );
 
     // Step 3 loop should still run
-    let step3 = logs.iter().find(|l| l.step_id == "step3").expect("step3 should exist");
+    let step3 = logs
+        .iter()
+        .find(|l| l.step_id == "step3")
+        .expect("step3 should exist");
     assert!(
-        step3.validation.as_ref().map_or(false, |v| v.contains("loop")),
+        step3
+            .validation
+            .as_ref()
+            .map_or(false, |v| v.contains("loop")),
         "Step 3 loop should run despite step 2 being skipped, got: {:?}",
         step3.validation
     );
@@ -593,26 +595,17 @@ fn test_full_multimodal_pipeline() {
 
     // Step 2: should receive step1 output and succeed
     assert!(logs[1].error.is_none(), "Step 2 (summarize) should succeed");
-    assert!(
-        logs[1].output.is_some(),
-        "Step 2 should produce output"
-    );
+    assert!(logs[1].output.is_some(), "Step 2 should produce output");
 
     // Step 3: should receive step2 output and succeed
     assert!(
         logs[2].error.is_none(),
         "Step 3 (extract insights) should succeed"
     );
-    assert!(
-        logs[2].output.is_some(),
-        "Step 3 should produce output"
-    );
+    assert!(logs[2].output.is_some(), "Step 3 should produce output");
 
     // Should have success events for all steps
-    let success_events: Vec<_> = events
-        .iter()
-        .filter(|e| e.status == "success")
-        .collect();
+    let success_events: Vec<_> = events.iter().filter(|e| e.status == "success").collect();
     assert!(
         success_events.len() >= 3,
         "Should have at least 3 success events (loop + 2 steps), got {}",

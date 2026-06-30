@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod integration_tests {
     use lao_orchestrator_core::{
-        Workflow, WorkflowStep, LoopConfig, LoopItems, Modality, DagNode, StepCondition,
-        ConditionType, ConditionOperator,
+        ConditionOperator, ConditionType, DagNode, LoopConfig, LoopItems, Modality, StepCondition,
+        Workflow, WorkflowStep,
     };
 
     // ============ Loop + Modality Integration ============

@@ -191,9 +191,15 @@ mod tests {
         let dir = temp_state_dir();
         let mut manager = WorkflowStateManager::new(dir.path()).unwrap();
 
-        manager.save_state(&make_state("a", WorkflowStatus::Pending)).unwrap();
-        manager.save_state(&make_state("b", WorkflowStatus::Running)).unwrap();
-        manager.save_state(&make_state("c", WorkflowStatus::Completed)).unwrap();
+        manager
+            .save_state(&make_state("a", WorkflowStatus::Pending))
+            .unwrap();
+        manager
+            .save_state(&make_state("b", WorkflowStatus::Running))
+            .unwrap();
+        manager
+            .save_state(&make_state("c", WorkflowStatus::Completed))
+            .unwrap();
 
         assert_eq!(manager.list_states().len(), 3);
     }
@@ -203,10 +209,18 @@ mod tests {
         let dir = temp_state_dir();
         let mut manager = WorkflowStateManager::new(dir.path()).unwrap();
 
-        manager.save_state(&make_state("a", WorkflowStatus::Pending)).unwrap();
-        manager.save_state(&make_state("b", WorkflowStatus::Running)).unwrap();
-        manager.save_state(&make_state("c", WorkflowStatus::Completed)).unwrap();
-        manager.save_state(&make_state("d", WorkflowStatus::Failed)).unwrap();
+        manager
+            .save_state(&make_state("a", WorkflowStatus::Pending))
+            .unwrap();
+        manager
+            .save_state(&make_state("b", WorkflowStatus::Running))
+            .unwrap();
+        manager
+            .save_state(&make_state("c", WorkflowStatus::Completed))
+            .unwrap();
+        manager
+            .save_state(&make_state("d", WorkflowStatus::Failed))
+            .unwrap();
 
         let active = manager.list_active_workflows();
         assert_eq!(active.len(), 2);
@@ -217,8 +231,12 @@ mod tests {
         let dir = temp_state_dir();
         let mut manager = WorkflowStateManager::new(dir.path()).unwrap();
 
-        manager.save_state(&make_state("a", WorkflowStatus::Scheduled)).unwrap();
-        manager.save_state(&make_state("b", WorkflowStatus::Running)).unwrap();
+        manager
+            .save_state(&make_state("a", WorkflowStatus::Scheduled))
+            .unwrap();
+        manager
+            .save_state(&make_state("b", WorkflowStatus::Running))
+            .unwrap();
 
         let scheduled = manager.list_scheduled_workflows();
         assert_eq!(scheduled.len(), 1);
@@ -232,7 +250,9 @@ mod tests {
         // First instance saves state
         {
             let mut manager = WorkflowStateManager::new(dir.path()).unwrap();
-            manager.save_state(&make_state("persist", WorkflowStatus::Running)).unwrap();
+            manager
+                .save_state(&make_state("persist", WorkflowStatus::Running))
+                .unwrap();
         }
 
         // Second instance should load it from disk
@@ -259,7 +279,9 @@ mod tests {
         manager.save_state(&recent_state).unwrap();
 
         // Create a running state (should never be cleaned)
-        manager.save_state(&make_state("running", WorkflowStatus::Running)).unwrap();
+        manager
+            .save_state(&make_state("running", WorkflowStatus::Running))
+            .unwrap();
 
         let removed = manager.cleanup_old_states(24).unwrap();
         assert_eq!(removed, 1);

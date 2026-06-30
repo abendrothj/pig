@@ -68,9 +68,9 @@ fn test_workflow_execution_success() {
             condition: None,
             on_success: None,
             on_failure: None,
-                for_each: None,
-                input_modality: None,
-                output_modality: None,
+            for_each: None,
+            input_modality: None,
+            output_modality: None,
         }],
     };
     let path = "temp_workflow.yaml";
@@ -116,9 +116,9 @@ fn test_workflow_plugin_missing() {
             condition: None,
             on_success: None,
             on_failure: None,
-                for_each: None,
-                input_modality: None,
-                output_modality: None,
+            for_each: None,
+            input_modality: None,
+            output_modality: None,
         }],
     };
     let dag = build_dag(&workflow.steps).unwrap();
@@ -144,9 +144,9 @@ fn test_workflow_invalid_step() {
             condition: None,
             on_success: None,
             on_failure: None,
-                for_each: None,
-                input_modality: None,
-                output_modality: None,
+            for_each: None,
+            input_modality: None,
+            output_modality: None,
         }],
     };
     let dag = build_dag(&workflow.steps).unwrap();
@@ -196,11 +196,11 @@ fn test_prompt_to_workflow_success() {
     let c_str = unsafe { std::ffi::CStr::from_ptr(result.text) };
     let output = c_str.to_string_lossy().to_string();
     unsafe { ((*dispatcher.vtable).free_output)(result) };
-    
+
     println!("[DEBUG] PromptDispatcher output: {}", output);
-    
+
     assert!(!output.is_empty(), "PromptDispatcher should return YAML");
-    
+
     // The prompt library returns EchoPlugin + SummarizerPlugin, not MarkdownSummarizer
     // Check that it contains the actual plugins used in the library
     assert!(
@@ -208,7 +208,7 @@ fn test_prompt_to_workflow_success() {
         "Should contain SummarizerPlugin or EchoPlugin (actual plugins in library). Got: {}",
         output
     );
-    
+
     // Verify it's valid YAML workflow format
     assert!(
         output.contains("workflow:") && output.contains("steps:"),
@@ -225,15 +225,15 @@ fn test_prompt_to_workflow_success() {
     let c_str_audio = unsafe { std::ffi::CStr::from_ptr(result_audio.text) };
     let output_audio = c_str_audio.to_string_lossy().to_string();
     unsafe { ((*dispatcher.vtable).free_output)(result_audio) };
-    
+
     println!("[DEBUG] Audio prompt output: {}", output_audio);
-    
+
     assert!(
         output_audio.contains("WhisperPlugin") || output_audio.contains("SummarizerPlugin"),
         "Should contain WhisperPlugin or SummarizerPlugin for audio prompt. Got: {}",
         output_audio
     );
-    
+
     // Verify it's valid YAML workflow format
     assert!(
         output_audio.contains("workflow:") && output_audio.contains("steps:"),
@@ -290,9 +290,9 @@ fn test_caching_and_retries() {
             condition: None,
             on_success: None,
             on_failure: None,
-                for_each: None,
-                input_modality: None,
-                output_modality: None,
+            for_each: None,
+            input_modality: None,
+            output_modality: None,
         }],
     };
     let path = "temp_cache.yaml";
@@ -348,9 +348,9 @@ fn test_log_output() {
             condition: None,
             on_success: None,
             on_failure: None,
-                for_each: None,
-                input_modality: None,
-                output_modality: None,
+            for_each: None,
+            input_modality: None,
+            output_modality: None,
         }],
     };
     let path = "temp_log.yaml";
@@ -511,9 +511,9 @@ fn test_plugin_type_mismatch() {
             condition: None,
             on_success: None,
             on_failure: None,
-                for_each: None,
-                input_modality: None,
-                output_modality: None,
+            for_each: None,
+            input_modality: None,
+            output_modality: None,
         }],
     };
     let path = "temp_type_mismatch.yaml";

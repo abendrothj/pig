@@ -121,8 +121,7 @@ impl FuzzStats {
             FuzzResult::ValidationFailure(msg) => {
                 self.validation_failures += 1;
                 if self.failure_details.len() < 10 {
-                    self.failure_details
-                        .push(format!("VALIDATION: {}", msg));
+                    self.failure_details.push(format!("VALIDATION: {}", msg));
                 }
             }
         }
@@ -666,10 +665,7 @@ fn fuzz_metadata_json_parsing(rng: &mut FuzzRng) -> FuzzResult {
 
 /// Harness 6: Test synthetic vtables with adversarial get_metadata implementations.
 fn fuzz_synthetic_vtable_metadata() -> Vec<FuzzResult> {
-    let adversarial_fns: Vec<(
-        &str,
-        unsafe extern "C" fn() -> PluginMetadata,
-    )> = vec![
+    let adversarial_fns: Vec<(&str, unsafe extern "C" fn() -> PluginMetadata)> = vec![
         ("all_null", adversarial_get_metadata_all_null),
         ("bad_utf8", adversarial_get_metadata_bad_utf8),
         ("bad_json", adversarial_get_metadata_bad_json),

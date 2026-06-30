@@ -20,12 +20,22 @@ pub fn run_workflow_yaml(path: &str) -> Result<Vec<StepLog>, String> {
 
     if plugin_count == 0 {
         tracing::error!(" No plugins loaded! Cannot execute workflow.");
-        tracing::info!(" Expected plugins directory: {}", PathUtils::plugin_dir().display());
+        tracing::info!(
+            " Expected plugins directory: {}",
+            PathUtils::plugin_dir().display()
+        );
         tracing::info!(" Make sure plugins are built: bash scripts/build-plugins.sh");
-        return Err(format!("No plugins loaded. Plugin directory: {}", PathUtils::plugin_dir().display()));
+        return Err(format!(
+            "No plugins loaded. Plugin directory: {}",
+            PathUtils::plugin_dir().display()
+        ));
     }
 
-    tracing::debug!(" Executing workflow with {} loaded plugins: {:?}", plugin_count, plugin_names);
+    tracing::debug!(
+        " Executing workflow with {} loaded plugins: {:?}",
+        plugin_count,
+        plugin_names
+    );
 
     // Validate workflow
     let errors = validate_workflow_types(&dag, &registry);
@@ -46,7 +56,9 @@ pub fn run_workflow_yaml(path: &str) -> Result<Vec<StepLog>, String> {
     let start_time = Instant::now();
 
     for (step_idx, node_id) in execution_order.iter().enumerate() {
-        let node = dag.iter().find(|n| &n.id == node_id)
+        let node = dag
+            .iter()
+            .find(|n| &n.id == node_id)
             .ok_or_else(|| format!("Node '{}' not found in DAG", node_id))?;
         let step = &node.step;
 
@@ -135,7 +147,8 @@ pub fn run_workflow_yaml(path: &str) -> Result<Vec<StepLog>, String> {
             }
 
             // Run plugin
-            let output_str = plugin.run_plugin(&plugin_input)
+            let output_str = plugin
+                .run_plugin(&plugin_input)
                 .unwrap_or_else(|e| format!("error: {}", e));
 
             // Check if output indicates success (not empty and doesn't start with "error:")
@@ -225,12 +238,22 @@ where
 
     if plugin_count == 0 {
         tracing::error!(" No plugins loaded! Cannot execute workflow.");
-        tracing::info!(" Expected plugins directory: {}", PathUtils::plugin_dir().display());
+        tracing::info!(
+            " Expected plugins directory: {}",
+            PathUtils::plugin_dir().display()
+        );
         tracing::info!(" Make sure plugins are built: bash scripts/build-plugins.sh");
-        return Err(format!("No plugins loaded. Plugin directory: {}", PathUtils::plugin_dir().display()));
+        return Err(format!(
+            "No plugins loaded. Plugin directory: {}",
+            PathUtils::plugin_dir().display()
+        ));
     }
 
-    tracing::debug!(" Executing workflow with {} loaded plugins: {:?}", plugin_count, plugin_names);
+    tracing::debug!(
+        " Executing workflow with {} loaded plugins: {:?}",
+        plugin_count,
+        plugin_names
+    );
 
     let errors = validate_workflow_types(&dag, &registry);
     if !errors.is_empty() {
@@ -248,7 +271,9 @@ where
     let mut outputs: HashMap<String, String> = HashMap::new();
 
     for (step_idx, node_id) in execution_order.iter().enumerate() {
-        let node = dag.iter().find(|n| &n.id == node_id)
+        let node = dag
+            .iter()
+            .find(|n| &n.id == node_id)
             .ok_or_else(|| format!("Node '{}' not found in DAG", node_id))?;
         let step = &node.step;
 
@@ -365,7 +390,8 @@ where
                 }
             }
 
-            let output_str = plugin.run_plugin(&plugin_input)
+            let output_str = plugin
+                .run_plugin(&plugin_input)
                 .unwrap_or_else(|e| format!("error: {}", e));
 
             // Check if output indicates success (not empty and doesn't start with "error:")

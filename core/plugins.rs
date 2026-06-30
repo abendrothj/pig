@@ -58,9 +58,7 @@ impl PluginInstance {
             if result.text.is_null() {
                 return Err(format!("Plugin '{}' returned null output", self.info.name));
             }
-            let output_str = CStr::from_ptr(result.text)
-                .to_string_lossy()
-                .to_string();
+            let output_str = CStr::from_ptr(result.text).to_string_lossy().to_string();
             ((*self.vtable).free_output)(result);
             Ok(output_str)
         }
@@ -68,8 +66,7 @@ impl PluginInstance {
 
     /// Convenience: build a PluginInput from a string and run the plugin.
     pub fn run_with_text(&self, text: &str) -> Result<String, String> {
-        let c_string = CString::new(text)
-            .map_err(|e| format!("Invalid input string: {}", e))?;
+        let c_string = CString::new(text).map_err(|e| format!("Invalid input string: {}", e))?;
         let input = PluginInput {
             text: c_string.into_raw(),
         };
@@ -126,9 +123,16 @@ impl PluginRegistry {
     pub fn default_registry() -> Self {
         let plugin_dir = PathUtils::plugin_dir();
         let plugin_dir_str = plugin_dir.to_str().unwrap_or("plugins");
-        tracing::debug!("PluginRegistry::default_registry() using directory: {}", plugin_dir_str);
+        tracing::debug!(
+            "PluginRegistry::default_registry() using directory: {}",
+            plugin_dir_str
+        );
         let registry = Self::dynamic_registry(plugin_dir_str);
-        tracing::debug!("PluginRegistry loaded {} plugins: {:?}", registry.plugin_count(), registry.plugin_names());
+        tracing::debug!(
+            "PluginRegistry loaded {} plugins: {:?}",
+            registry.plugin_count(),
+            registry.plugin_names()
+        );
         registry
     }
 
@@ -156,7 +160,8 @@ impl PluginRegistry {
                 // Each plugin builds into its own target/release/ with cargo build --release
                 let release_dir = path.join("target").join("release");
                 if release_dir.is_dir() {
-                    loaded_count += self.load_shared_libs_from(&release_dir, prefix, ext, &mut found_files);
+                    loaded_count +=
+                        self.load_shared_libs_from(&release_dir, prefix, ext, &mut found_files);
                 }
 
                 // Strategy 2: Check for shared libs directly in the subdirectory
@@ -178,7 +183,11 @@ impl PluginRegistry {
             }
         }
 
-        tracing::debug!("Plugin loading summary: {} files found, {} plugins loaded", found_files, loaded_count);
+        tracing::debug!(
+            "Plugin loading summary: {} files found, {} plugins loaded",
+            found_files,
+            loaded_count
+        );
     }
 
     /// Load all shared libraries from a directory, returning count of successfully loaded plugins.
@@ -204,8 +213,8 @@ impl PluginRegistry {
 
             // Match plugin shared libraries: lib*plugin*.{dylib,so,dll}
             let matches_ext = fpath.extension().and_then(|e| e.to_str()) == Some(ext);
-            let matches_pattern = fname.starts_with(prefix)
-                && fname.to_lowercase().contains("plugin");
+            let matches_pattern =
+                fname.starts_with(prefix) && fname.to_lowercase().contains("plugin");
 
             if matches_ext && matches_pattern {
                 *found_files += 1;
@@ -224,10 +233,6 @@ impl PluginRegistry {
         loaded
     }
 
-    fn is_shared_library_extension(&self, ext: &str) -> bool {
-        Platform::is_shared_lib_extension(ext)
-    }
-
     fn is_shared_library_file(&self, path: &std::path::Path) -> bool {
         Platform::is_shared_lib_file(path)
     }
@@ -237,11 +242,19 @@ impl PluginRegistry {
             tracing::debug!("Loading plugin from: {}", dll_path.display());
 
             if !dll_path.exists() {
-                return Err(format!("Plugin file does not exist: {}", dll_path.display()));
+                return Err(format!(
+                    "Plugin file does not exist: {}",
+                    dll_path.display()
+                ));
             }
 
-            let library = Library::new(dll_path)
-                .map_err(|e| format!("Failed to load plugin library {}: {} (check if dependencies are available)", dll_path.display(), e))?;
+            let library = Library::new(dll_path).map_err(|e| {
+                format!(
+                    "Failed to load plugin library {}: {} (check if dependencies are available)",
+                    dll_path.display(),
+                    e
+                )
+            })?;
 
             tracing::debug!("Library loaded successfully");
 
@@ -258,7 +271,10 @@ impl PluginRegistry {
 
             let vtable = plugin_vtable_fn();
             if vtable.is_null() {
-                return Err(format!("plugin_vtable returned null pointer for {}", dll_path.display()));
+                return Err(format!(
+                    "plugin_vtable returned null pointer for {}",
+                    dll_path.display()
+                ));
             }
 
             tracing::debug!("Called plugin_vtable function, got pointer: {:?}", vtable);
@@ -472,7 +488,9 @@ mod tests {
     #[test]
     fn test_find_by_capability_empty() {
         let registry = PluginRegistry::new();
-        assert!(registry.find_plugins_by_capability("text-generation").is_empty());
+        assert!(registry
+            .find_plugins_by_capability("text-generation")
+            .is_empty());
     }
 
     #[test]
@@ -490,15 +508,6 @@ mod tests {
         // Should return just the plugin itself
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), vec!["unknown"]);
-    }
-
-    #[test]
-    fn test_is_shared_library_extension() {
-        let registry = PluginRegistry::new();
-        let ext = Platform::shared_lib_extension();
-        assert!(registry.is_shared_library_extension(ext));
-        assert!(!registry.is_shared_library_extension("txt"));
-        assert!(!registry.is_shared_library_extension("rs"));
     }
 
     #[test]

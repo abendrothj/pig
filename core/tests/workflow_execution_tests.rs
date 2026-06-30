@@ -3,8 +3,8 @@
 use lao_orchestrator_core::cross_platform::PathUtils;
 use lao_orchestrator_core::plugins::PluginRegistry;
 use lao_orchestrator_core::{
-    run_workflow_yaml, run_workflow_yaml_parallel_with_callback,
-    run_workflow_yaml_with_callback, StepEvent, Workflow, WorkflowStep,
+    run_workflow_yaml, run_workflow_yaml_parallel_with_callback, run_workflow_yaml_with_callback,
+    StepEvent, Workflow, WorkflowStep,
 };
 use serial_test::serial;
 use std::fs;
@@ -43,19 +43,19 @@ fn test_workflow_execution_basic() {
             condition: None,
             on_success: None,
             on_failure: None,
-                for_each: None,
-                input_modality: None,
-                output_modality: None,
+            for_each: None,
+            input_modality: None,
+            output_modality: None,
         }],
     };
     let path = "temp_basic_execution.yaml";
     fs::write(path, serde_yaml::to_string(&workflow).unwrap()).unwrap();
 
     let logs = run_workflow_yaml(path).expect("Workflow should execute successfully");
-    
+
     // Verify execution completed
     assert!(!logs.is_empty(), "Should have execution logs");
-    
+
     // Verify output
     assert!(
         logs.iter().any(|log| log
@@ -65,7 +65,7 @@ fn test_workflow_execution_basic() {
             .unwrap_or(false)),
         "Should have expected output"
     );
-    
+
     // Verify no errors
     assert!(
         logs.iter().all(|log| log.error.is_none()),
@@ -137,10 +137,10 @@ fn test_workflow_execution_chain() {
     fs::write(path, serde_yaml::to_string(&workflow).unwrap()).unwrap();
 
     let logs = run_workflow_yaml(path).expect("Chain workflow should execute");
-    
+
     // Should have 3 steps
     assert_eq!(logs.len(), 3, "Should have 3 execution logs");
-    
+
     // All steps should succeed
     assert!(
         logs.iter().all(|log| log.error.is_none()),
@@ -214,16 +214,18 @@ fn test_workflow_execution_parallel() {
     let mut events = Vec::new();
     let logs = run_workflow_yaml_parallel_with_callback(path, |event: StepEvent| {
         events.push(event);
-    }).expect("Parallel workflow should execute");
-    
+    })
+    .expect("Parallel workflow should execute");
+
     // Should have 3 steps
     assert_eq!(logs.len(), 3, "Should have 3 execution logs");
-    
+
     // Should have events for all steps
     assert!(events.len() >= 3, "Should have events for all steps");
-    
+
     // Verify parallel execution (steps should complete in any order)
-    let completed_steps: Vec<_> = events.iter()
+    let completed_steps: Vec<_> = events
+        .iter()
         .filter(|e| e.status == "success" || e.status == "cache")
         .collect();
     assert_eq!(completed_steps.len(), 3, "All steps should complete");
@@ -240,23 +242,21 @@ fn test_workflow_execution_with_callback() {
 
     let workflow = Workflow {
         workflow: "Callback Test".to_string(),
-        steps: vec![
-            WorkflowStep {
-                run: "EchoPlugin".to_string(),
-                params: serde_yaml::from_str("input: 'Callback test'").unwrap(),
-                retries: None,
-                retry_delay: None,
-                cache_key: None,
-                input_from: None,
-                depends_on: None,
-                condition: None,
-                on_success: None,
-                on_failure: None,
-                for_each: None,
-                input_modality: None,
-                output_modality: None,
-            },
-        ],
+        steps: vec![WorkflowStep {
+            run: "EchoPlugin".to_string(),
+            params: serde_yaml::from_str("input: 'Callback test'").unwrap(),
+            retries: None,
+            retry_delay: None,
+            cache_key: None,
+            input_from: None,
+            depends_on: None,
+            condition: None,
+            on_success: None,
+            on_failure: None,
+            for_each: None,
+            input_modality: None,
+            output_modality: None,
+        }],
     };
     let path = "temp_callback_test.yaml";
     fs::write(path, serde_yaml::to_string(&workflow).unwrap()).unwrap();
@@ -264,24 +264,28 @@ fn test_workflow_execution_with_callback() {
     let mut events = Vec::new();
     let logs = run_workflow_yaml_with_callback(path, |event: StepEvent| {
         events.push(event.clone());
-        println!("Event: step={} status={} attempt={}", event.step, event.status, event.attempt);
-    }).expect("Workflow with callback should execute");
-    
+        println!(
+            "Event: step={} status={} attempt={}",
+            event.step, event.status, event.attempt
+        );
+    })
+    .expect("Workflow with callback should execute");
+
     // Should have received events
     assert!(!events.is_empty(), "Should have received callback events");
-    
+
     // Should have at least one "running" event
     assert!(
         events.iter().any(|e| e.status == "running"),
         "Should have running event"
     );
-    
+
     // Should have at least one "success" event
     assert!(
         events.iter().any(|e| e.status == "success"),
         "Should have success event"
     );
-    
+
     // Logs should match events
     assert_eq!(logs.len(), 1, "Should have one log entry");
 
@@ -365,21 +369,21 @@ fn test_workflow_execution_fan_out_fan_in() {
     fs::write(path, serde_yaml::to_string(&workflow).unwrap()).unwrap();
 
     let logs = run_workflow_yaml(path).expect("Fan workflow should execute");
-    
+
     // Should have 4 steps
     assert_eq!(logs.len(), 4, "Should have 4 execution logs");
-    
+
     // Verify execution order (step1 first, then step2/step3 in parallel, then step4)
     let step1_log = logs.iter().find(|l| l.step == 0);
     let step2_log = logs.iter().find(|l| l.step == 1);
     let step3_log = logs.iter().find(|l| l.step == 2);
     let step4_log = logs.iter().find(|l| l.step == 3);
-    
+
     assert!(step1_log.is_some(), "Step 1 should exist");
     assert!(step2_log.is_some(), "Step 2 should exist");
     assert!(step3_log.is_some(), "Step 3 should exist");
     assert!(step4_log.is_some(), "Step 4 should exist");
-    
+
     // All should succeed
     assert!(
         logs.iter().all(|log| log.error.is_none()),

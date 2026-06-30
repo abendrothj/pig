@@ -26,7 +26,10 @@ pub fn execute_with_loop(
                 serde_json::from_str::<Vec<serde_yaml::Value>>(output_str)
                     .map_err(|e| format!("Failed to parse loop items from {}: {}", ref_path, e))?
             } else {
-                return Err(format!("Loop reference '{}' not found in outputs", ref_path));
+                return Err(format!(
+                    "Loop reference '{}' not found in outputs",
+                    ref_path
+                ));
             }
         }
     };
@@ -46,14 +49,13 @@ pub fn execute_with_loop(
 
             let handle = std::thread::spawn(move || {
                 if let Some(mapping) = params.as_mapping_mut() {
-                    mapping.insert(
-                        serde_yaml::Value::String(var_name),
-                        item_clone,
-                    );
+                    mapping.insert(serde_yaml::Value::String(var_name), item_clone);
                 }
 
                 let plugin_input = build_plugin_input(&params);
-                let reg_guard = registry_clone.lock().expect("plugin registry mutex poisoned");
+                let reg_guard = registry_clone
+                    .lock()
+                    .expect("plugin registry mutex poisoned");
                 let plugin_opt = reg_guard.get(&step_clone.run);
 
                 if let Some(plugin) = plugin_opt {
@@ -89,16 +91,19 @@ pub fn execute_with_loop(
 // Group nodes by execution level (nodes at same level can run in parallel)
 pub fn group_by_execution_levels(dag: &[DagNode]) -> Vec<Vec<String>> {
     let mut levels = Vec::new();
-    let mut remaining: std::collections::HashSet<String> = dag.iter().map(|n| n.id.clone()).collect();
-    let node_map: std::collections::HashMap<String, &DagNode> = dag.iter().map(|n| (n.id.clone(), n)).collect();
+    let mut remaining: std::collections::HashSet<String> =
+        dag.iter().map(|n| n.id.clone()).collect();
+    let node_map: std::collections::HashMap<String, &DagNode> =
+        dag.iter().map(|n| (n.id.clone(), n)).collect();
 
     while !remaining.is_empty() {
         let mut current_level = Vec::new();
         for node_id in remaining.iter() {
             if let Some(node) = node_map.get(node_id) {
-                let all_parents_done = node.parents.iter().all(|parent_id| {
-                    !remaining.contains(parent_id)
-                });
+                let all_parents_done = node
+                    .parents
+                    .iter()
+                    .all(|parent_id| !remaining.contains(parent_id));
                 if all_parents_done {
                     current_level.push(node_id.clone());
                 }
@@ -139,12 +144,22 @@ where
 
         if plugin_count == 0 {
             tracing::error!(" No plugins loaded! Cannot validate workflow.");
-            tracing::info!(" Expected plugins directory: {}", PathUtils::plugin_dir().display());
+            tracing::info!(
+                " Expected plugins directory: {}",
+                PathUtils::plugin_dir().display()
+            );
             tracing::info!(" Make sure plugins are built: bash scripts/build-plugins.sh");
-            return Err(format!("No plugins loaded. Plugin directory: {}", PathUtils::plugin_dir().display()));
+            return Err(format!(
+                "No plugins loaded. Plugin directory: {}",
+                PathUtils::plugin_dir().display()
+            ));
         }
 
-        tracing::debug!(" Validating workflow with {} loaded plugins: {:?}", plugin_count, plugin_names);
+        tracing::debug!(
+            " Validating workflow with {} loaded plugins: {:?}",
+            plugin_count,
+            plugin_names
+        );
 
         let errors = validate_workflow_types(&dag, &reg_guard);
         if !errors.is_empty() {
@@ -158,7 +173,8 @@ where
     }
 
     let execution_levels = group_by_execution_levels(&dag);
-    let node_map: std::collections::HashMap<String, &DagNode> = dag.iter().map(|n| (n.id.clone(), n)).collect();
+    let node_map: std::collections::HashMap<String, &DagNode> =
+        dag.iter().map(|n| (n.id.clone(), n)).collect();
 
     let logs_mutex = std::sync::Arc::new(std::sync::Mutex::new(Vec::<StepLog>::new()));
     let outputs = std::sync::Arc::new(std::sync::Mutex::new(HashMap::new()));
@@ -174,7 +190,10 @@ where
             let node = match node_map.get(&node_id_clone) {
                 Some(n) => n,
                 None => {
-                    tracing::error!(" Node '{}' not found in DAG during parallel execution", node_id_clone);
+                    tracing::error!(
+                        " Node '{}' not found in DAG during parallel execution",
+                        node_id_clone
+                    );
                     continue;
                 }
             };
@@ -264,9 +283,16 @@ where
                         error: None,
                     });
 
-                    match execute_with_loop(&step, loop_config, &params, &outputs_map, &registry_clone) {
+                    match execute_with_loop(
+                        &step,
+                        loop_config,
+                        &params,
+                        &outputs_map,
+                        &registry_clone,
+                    ) {
                         Ok(loop_results) => {
-                            let output_str = serde_json::to_string(&loop_results).unwrap_or_else(|_| "[]".to_string());
+                            let output_str = serde_json::to_string(&loop_results)
+                                .unwrap_or_else(|_| "[]".to_string());
 
                             let _ = event_tx_clone.send(StepEvent {
                                 step: step_idx,
@@ -274,12 +300,16 @@ where
                                 runner: step.run.clone(),
                                 status: "success".to_string(),
                                 attempt: 1,
-                                message: Some(format!("Loop completed: {} iterations", loop_results.len())),
+                                message: Some(format!(
+                                    "Loop completed: {} iterations",
+                                    loop_results.len()
+                                )),
                                 output: Some(output_str.clone()),
                                 error: None,
                             });
 
-                            let mut outputs_guard = outputs_clone.lock().expect("outputs mutex poisoned");
+                            let mut outputs_guard =
+                                outputs_clone.lock().expect("outputs mutex poisoned");
                             outputs_guard.insert(node_id_clone.clone(), output_str.clone());
                             drop(outputs_guard);
 
@@ -332,10 +362,12 @@ where
 
                 // Get plugin info (need version for cache key)
                 let plugin_info = {
-                    let reg_guard = registry_clone.lock().expect("plugin registry mutex poisoned");
-                    reg_guard.get(&step.run).map(|p| {
-                        (p.info.name.clone(), p.info.version.clone())
-                    })
+                    let reg_guard = registry_clone
+                        .lock()
+                        .expect("plugin registry mutex poisoned");
+                    reg_guard
+                        .get(&step.run)
+                        .map(|p| (p.info.name.clone(), p.info.version.clone()))
                 };
 
                 if plugin_info.is_none() {
@@ -377,14 +409,16 @@ where
                 } else {
                     compute_default_cache_key(&step, &plugin_version)
                 };
-                let cache_dir = std_env::var("LAO_CACHE_DIR").unwrap_or_else(|_| "cache".to_string());
+                let cache_dir =
+                    std_env::var("LAO_CACHE_DIR").unwrap_or_else(|_| "cache".to_string());
                 let cache_path = format!("{}/{}.json", cache_dir, cache_key_effective);
 
                 // Try cache first
                 if let Ok(cached) = fs::read_to_string(&cache_path) {
                     if let Ok(cached_output) = serde_json::from_str::<String>(&cached) {
                         cache_status = Some("cache".to_string());
-                        let mut outputs_guard = outputs_clone.lock().expect("outputs mutex poisoned");
+                        let mut outputs_guard =
+                            outputs_clone.lock().expect("outputs mutex poisoned");
                         outputs_guard.insert(node_id_clone.clone(), cached_output.clone());
                         let _ = event_tx_clone.send(StepEvent {
                             step: step_idx,
@@ -421,16 +455,23 @@ where
                         runner: plugin_name.clone(),
                         status: "running".to_string(),
                         attempt,
-                        message: if attempt > 1 { Some("retrying".to_string()) } else { None },
+                        message: if attempt > 1 {
+                            Some("retrying".to_string())
+                        } else {
+                            None
+                        },
                         output: None,
                         error: None,
                     });
 
                     // Execute plugin (serialized access through registry lock)
                     let (output_str, success) = {
-                        let reg_guard = registry_clone.lock().expect("plugin registry mutex poisoned");
+                        let reg_guard = registry_clone
+                            .lock()
+                            .expect("plugin registry mutex poisoned");
                         if let Some(plugin) = reg_guard.get(&plugin_name) {
-                            let output = plugin.run_plugin(&plugin_input)
+                            let output = plugin
+                                .run_plugin(&plugin_input)
                                 .unwrap_or_else(|e| format!("error: {}", e));
                             let is_success = !output.trim().is_empty()
                                 && !output.trim().to_lowercase().starts_with("error:");
@@ -441,7 +482,8 @@ where
                     };
 
                     if success {
-                        let mut outputs_guard = outputs_clone.lock().expect("outputs mutex poisoned");
+                        let mut outputs_guard =
+                            outputs_clone.lock().expect("outputs mutex poisoned");
                         outputs_guard.insert(node_id_clone.clone(), output_str.clone());
 
                         // Save to cache if cache_key is set

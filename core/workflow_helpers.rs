@@ -40,9 +40,8 @@ pub fn build_plugin_input(params: &serde_yaml::Value) -> PluginInput {
 
     // Fallback: serialize the entire params object
     let text = serde_yaml::to_string(params).unwrap_or_default();
-    let c_string = CString::new(text).unwrap_or_else(|_| {
-        CString::new("error: invalid params").expect("static string")
-    });
+    let c_string = CString::new(text)
+        .unwrap_or_else(|_| CString::new("error: invalid params").expect("static string"));
     PluginInput {
         text: c_string.into_raw(),
     }

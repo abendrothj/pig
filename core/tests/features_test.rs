@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
     use lao_orchestrator_core::{
-        LoopConfig, LoopItems, Modality, DagNode, WorkflowStep, Workflow, StepCondition,
-        ConditionType, ConditionOperator,
+        ConditionOperator, ConditionType, DagNode, LoopConfig, LoopItems, Modality, StepCondition,
+        Workflow, WorkflowStep,
     };
 
     // ============ Loop/Iteration Tests ============
@@ -12,8 +12,8 @@ mod tests {
         let loop_config = LoopConfig {
             items: LoopItems::Array(vec![serde_yaml::Value::String("a".to_string())]),
             var: "item".to_string(), // Use hardcoded default
-            collect_results: true,    // Use hardcoded default
-            max_parallel: 4,          // Use hardcoded default
+            collect_results: true,   // Use hardcoded default
+            max_parallel: 4,         // Use hardcoded default
         };
 
         assert_eq!(loop_config.var, "item");
@@ -66,34 +66,16 @@ mod tests {
 
     #[test]
     fn test_modality_from_audio_extension() {
-        assert_eq!(
-            Modality::from_file_extension("mp3"),
-            Some(Modality::Audio)
-        );
-        assert_eq!(
-            Modality::from_file_extension("wav"),
-            Some(Modality::Audio)
-        );
-        assert_eq!(
-            Modality::from_file_extension("ogg"),
-            Some(Modality::Audio)
-        );
+        assert_eq!(Modality::from_file_extension("mp3"), Some(Modality::Audio));
+        assert_eq!(Modality::from_file_extension("wav"), Some(Modality::Audio));
+        assert_eq!(Modality::from_file_extension("ogg"), Some(Modality::Audio));
     }
 
     #[test]
     fn test_modality_from_image_extension() {
-        assert_eq!(
-            Modality::from_file_extension("png"),
-            Some(Modality::Image)
-        );
-        assert_eq!(
-            Modality::from_file_extension("jpg"),
-            Some(Modality::Image)
-        );
-        assert_eq!(
-            Modality::from_file_extension("gif"),
-            Some(Modality::Image)
-        );
+        assert_eq!(Modality::from_file_extension("png"), Some(Modality::Image));
+        assert_eq!(Modality::from_file_extension("jpg"), Some(Modality::Image));
+        assert_eq!(Modality::from_file_extension("gif"), Some(Modality::Image));
     }
 
     #[test]
@@ -116,18 +98,12 @@ mod tests {
             Modality::from_mime_type("audio/mpeg"),
             Some(Modality::Audio)
         );
-        assert_eq!(
-            Modality::from_mime_type("audio/wav"),
-            Some(Modality::Audio)
-        );
+        assert_eq!(Modality::from_mime_type("audio/wav"), Some(Modality::Audio));
     }
 
     #[test]
     fn test_modality_from_mime_image() {
-        assert_eq!(
-            Modality::from_mime_type("image/png"),
-            Some(Modality::Image)
-        );
+        assert_eq!(Modality::from_mime_type("image/png"), Some(Modality::Image));
         assert_eq!(
             Modality::from_mime_type("image/jpeg"),
             Some(Modality::Image)
@@ -136,10 +112,7 @@ mod tests {
 
     #[test]
     fn test_modality_from_mime_video() {
-        assert_eq!(
-            Modality::from_mime_type("video/mp4"),
-            Some(Modality::Video)
-        );
+        assert_eq!(Modality::from_mime_type("video/mp4"), Some(Modality::Video));
         assert_eq!(
             Modality::from_mime_type("video/quicktime"),
             Some(Modality::Video)
@@ -148,10 +121,7 @@ mod tests {
 
     #[test]
     fn test_modality_from_mime_text() {
-        assert_eq!(
-            Modality::from_mime_type("text/plain"),
-            Some(Modality::Text)
-        );
+        assert_eq!(Modality::from_mime_type("text/plain"), Some(Modality::Text));
         assert_eq!(
             Modality::from_mime_type("application/json"),
             Some(Modality::Structured)
@@ -221,17 +191,10 @@ mod tests {
         };
 
         let yaml = serde_yaml::to_string(&workflow).expect("Failed to serialize");
-        let deserialized: Workflow =
-            serde_yaml::from_str(&yaml).expect("Failed to deserialize");
+        let deserialized: Workflow = serde_yaml::from_str(&yaml).expect("Failed to deserialize");
 
-        assert_eq!(
-            deserialized.steps[0].input_modality,
-            Some(Modality::Image)
-        );
-        assert_eq!(
-            deserialized.steps[0].output_modality,
-            Some(Modality::Text)
-        );
+        assert_eq!(deserialized.steps[0].input_modality, Some(Modality::Image));
+        assert_eq!(deserialized.steps[0].output_modality, Some(Modality::Text));
     }
 
     // ============ Loop + Modality Integration Tests ============
