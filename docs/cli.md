@@ -22,8 +22,18 @@ lao <COMMAND> [OPTIONS]
   Manage workflow YAML files under `workflows/`.
 - `explain-plugin <name>`  
   Show manifest details and examples for a bundled plugin.
-- `schedule`, `unschedule`, `list-scheduled`, `status`, `cleanup`  
-  Manage persisted workflow schedule and execution state metadata.
+- `schedule`, `unschedule`, `list-scheduled`, `run-due`, `status`, `cleanup`  
+  Manage persisted workflow schedule and execution state metadata. `run-due`
+  manually executes due enabled schedules; LAO does not run a background daemon.
+
+## Logging
+
+Set `RUST_LOG` to control CLI/core diagnostics:
+
+```bash
+RUST_LOG=info lao run workflows/test_loop.yaml
+RUST_LOG=debug lao plugin-list
+```
 
 ## Execution Modes
 

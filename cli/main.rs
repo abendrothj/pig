@@ -1,9 +1,8 @@
 use clap::{Parser, Subcommand};
 use lao_orchestrator_core::{
     cross_platform::PathUtils, load_workflow_yaml, plugins::PluginRegistry, run_workflow_yaml,
-    scheduler::WorkflowScheduler, workflow_state::WorkflowSchedule,
+    scheduler::WorkflowScheduler, trust::TrustPolicy, workflow_state::WorkflowSchedule,
 };
-use lao_plugin_api::PluginInput;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -95,6 +94,8 @@ enum Commands {
     Unschedule { workflow_id: String },
     /// List all scheduled workflows
     ListScheduled,
+    /// Run all scheduled workflows that are currently due
+    RunDue,
     /// Show workflow execution history and state
     Status {
         #[arg(help = "Workflow ID (optional - shows all if not specified)")]
@@ -112,6 +113,13 @@ enum Commands {
 }
 
 fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
+        .init();
+
     let cli = Cli::parse();
     match cli.command {
         Commands::Run { path, dry_run } => {
@@ -144,9 +152,17 @@ fn main() {
             } else {
                 match run_workflow_yaml(&path) {
                     Ok(results) => {
-                        println!("Workflow executed successfully. Step outputs:");
+                        let has_errors = results.iter().any(|step| step.error.is_some());
+                        if has_errors {
+                            println!("Workflow completed with step errors:");
+                        } else {
+                            println!("Workflow executed successfully. Step outputs:");
+                        }
                         for (i, output) in results.iter().enumerate() {
                             println!("Step {}: {:?}", i + 1, output);
+                        }
+                        if has_errors {
+                            std::process::exit(1);
                         }
                     }
                     Err(e) => {
@@ -169,11 +185,15 @@ fn main() {
                     }
                 };
                 let errors = lao_orchestrator_core::validate_workflow_types(&dag, &plugin_registry);
-                if errors.is_empty() {
+                let trust_result = TrustPolicy::load_default().validate_workflow(&workflow);
+                if errors.is_empty() && trust_result.is_ok() {
                     println!("Validation passed: all steps and plugins available.");
                 } else {
                     for (step, msg) in errors {
                         println!("Step {}: {}", step, msg);
+                    }
+                    if let Err(e) = trust_result {
+                        println!("Trust policy: {}", e);
                     }
                     std::process::exit(1);
                 }
@@ -226,26 +246,23 @@ fn main() {
                     std::process::exit(1);
                 }
             };
-            // SAFETY: FFI call to plugin, must ensure input is valid and plugin is trusted.
-            use std::ffi::CString;
-            let c_prompt = match CString::new(prompt.clone()) {
-                Ok(c) => c,
-                Err(_) => {
-                    eprintln!("Failed to create CString from prompt");
+            let yaml = match dispatcher.run_with_text(&prompt) {
+                result if result.is_success() => result.output.unwrap_or_default(),
+                result => {
+                    eprintln!("PromptDispatcherPlugin failed: {}", result.display_error());
                     std::process::exit(1);
                 }
             };
-            let input = PluginInput {
-                text: c_prompt.into_raw(),
-            };
-            let output_obj = unsafe { ((*dispatcher.vtable).run)(&input) };
-            let c_str = unsafe { std::ffi::CStr::from_ptr(output_obj.text) };
-            let yaml = c_str.to_string_lossy().to_string();
-            unsafe { ((*dispatcher.vtable).free_output)(output_obj) };
             println!("Generated workflow:\n{}", yaml);
             let clean_yaml = strip_code_fences(&yaml);
             match serde_yaml::from_str::<lao_orchestrator_core::Workflow>(&clean_yaml) {
-                Ok(_workflow) => {
+                Ok(workflow) => {
+                    if let Err(e) = TrustPolicy::load_default().validate_workflow(&workflow) {
+                        eprintln!(
+                            "[TRUST WARNING] Generated workflow is not trusted by default: {}",
+                            e
+                        );
+                    }
                     let out_path = output
                         .unwrap_or_else(|| "workflows/generated_from_prompt.yaml".to_string());
                     if let Some(parent) = std::path::Path::new(&out_path).parent() {
@@ -304,22 +321,14 @@ fn main() {
             };
             let mut failures = 0;
             for (i, pair) in prompt_pairs.iter().enumerate() {
-                use std::ffi::CString;
-                let c_prompt = match CString::new(pair.prompt.clone()) {
-                    Ok(c) => c,
-                    Err(_) => {
-                        eprintln!("Failed to create CString from prompt");
+                let generated = match dispatcher.run_with_text(&pair.prompt) {
+                    result if result.is_success() => result.output.unwrap_or_default(),
+                    result => {
+                        eprintln!("Prompt {} failed: {}", i + 1, result.display_error());
                         failures += 1;
                         continue;
                     }
                 };
-                let input = PluginInput {
-                    text: c_prompt.into_raw(),
-                };
-                let output_obj = unsafe { ((*dispatcher.vtable).run)(&input) };
-                let c_str = unsafe { std::ffi::CStr::from_ptr(output_obj.text) };
-                let generated = c_str.to_string_lossy().to_string();
-                unsafe { ((*dispatcher.vtable).free_output)(output_obj) };
                 let expected = normalize_yaml(&pair.workflow);
                 let actual = normalize_yaml(&generated);
                 let pass = expected == actual;
@@ -543,6 +552,34 @@ fn main() {
                     }
                     println!("    Run count: {}", workflow.schedule.run_count);
                     println!();
+                }
+            }
+        }
+        Commands::RunDue => {
+            let mut scheduler = match WorkflowScheduler::new("workflow_states") {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("[ERROR] Failed to initialize scheduler: {}", e);
+                    std::process::exit(1);
+                }
+            };
+
+            let results = scheduler.run_due_workflows();
+            if results.is_empty() {
+                println!("No scheduled workflows are due.");
+            } else {
+                let mut failures = 0;
+                for (id, result) in results {
+                    match result {
+                        Ok(logs) => println!("✓ Ran {} ({} steps)", id, logs.len()),
+                        Err(e) => {
+                            failures += 1;
+                            eprintln!("[ERROR] {} failed: {}", id, e);
+                        }
+                    }
+                }
+                if failures > 0 {
+                    std::process::exit(1);
                 }
             }
         }
