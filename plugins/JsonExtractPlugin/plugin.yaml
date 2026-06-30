@@ -1,0 +1,12 @@
+name: JsonExtractPlugin
+version: 0.1.0
+description: Extracts a value from a JSON document using a dotted path selector
+maintainer: LAO Contributors
+tags: [json, extract, parse, utility]
+input:
+  type: any
+output:
+  type: text
+example_prompts:
+  - "Extract $.user.email from this JSON payload"
+  - "Pull the first item id out of this API response"

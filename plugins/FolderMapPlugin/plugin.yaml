@@ -1,0 +1,12 @@
+name: FolderMapPlugin
+version: 0.1.0
+description: Recursively lists files under a directory as a newline-separated map
+maintainer: LAO Contributors
+tags: [file, directory, walk, utility]
+input:
+  type: any
+output:
+  type: text
+example_prompts:
+  - "List every file under ./docs"
+  - "Map the project directory so I can pick files to process"

@@ -1,0 +1,12 @@
+[package]
+name = "shell_command_plugin"
+version = "0.1.20"
+edition = "2021"
+description = "Runs a trusted shell command and returns its stdout"
+authors = ["Jake Abendroth <contact@jakea.net>"]
+
+[dependencies]
+lao_plugin_api = { path = "../../lao_plugin_api" }
+
+[lib]
+crate-type = ["cdylib"]

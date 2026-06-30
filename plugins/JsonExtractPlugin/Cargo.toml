@@ -1,0 +1,13 @@
+[package]
+name = "json_extract_plugin"
+version = "0.1.20"
+edition = "2021"
+description = "Extracts a value from a JSON document using a dotted path selector"
+authors = ["Jake Abendroth <contact@jakea.net>"]
+
+[dependencies]
+lao_plugin_api = { path = "../../lao_plugin_api" }
+serde_json = "1"
+
+[lib]
+crate-type = ["cdylib"]
