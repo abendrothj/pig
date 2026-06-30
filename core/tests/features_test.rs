@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
     use lao_orchestrator_core::{
-        ConditionOperator, ConditionType, DagNode, LoopConfig, LoopItems, Modality, StepCondition,
-        Workflow, WorkflowStep,
+        ConditionOperator, ConditionType, DagNode, LoopConfig, LoopItems, StepCondition, Workflow,
+        WorkflowStep,
     };
 
     // ============ Loop/Iteration Tests ============
@@ -62,177 +62,6 @@ mod tests {
         assert_eq!(deserialized.collect_results, true);
     }
 
-    // ============ Modality Tests ============
-
-    #[test]
-    fn test_modality_from_audio_extension() {
-        assert_eq!(Modality::from_file_extension("mp3"), Some(Modality::Audio));
-        assert_eq!(Modality::from_file_extension("wav"), Some(Modality::Audio));
-        assert_eq!(Modality::from_file_extension("ogg"), Some(Modality::Audio));
-    }
-
-    #[test]
-    fn test_modality_from_image_extension() {
-        assert_eq!(Modality::from_file_extension("png"), Some(Modality::Image));
-        assert_eq!(Modality::from_file_extension("jpg"), Some(Modality::Image));
-        assert_eq!(Modality::from_file_extension("gif"), Some(Modality::Image));
-    }
-
-    #[test]
-    fn test_modality_from_video_extension() {
-        assert_eq!(Modality::from_file_extension("mp4"), Some(Modality::Video));
-        assert_eq!(Modality::from_file_extension("avi"), Some(Modality::Video));
-        assert_eq!(Modality::from_file_extension("mov"), Some(Modality::Video));
-    }
-
-    #[test]
-    fn test_modality_from_text_extension() {
-        assert_eq!(Modality::from_file_extension("txt"), Some(Modality::Text));
-        assert_eq!(Modality::from_file_extension("json"), Some(Modality::Text));
-        assert_eq!(Modality::from_file_extension("yaml"), Some(Modality::Text));
-    }
-
-    #[test]
-    fn test_modality_from_mime_audio() {
-        assert_eq!(
-            Modality::from_mime_type("audio/mpeg"),
-            Some(Modality::Audio)
-        );
-        assert_eq!(Modality::from_mime_type("audio/wav"), Some(Modality::Audio));
-    }
-
-    #[test]
-    fn test_modality_from_mime_image() {
-        assert_eq!(Modality::from_mime_type("image/png"), Some(Modality::Image));
-        assert_eq!(
-            Modality::from_mime_type("image/jpeg"),
-            Some(Modality::Image)
-        );
-    }
-
-    #[test]
-    fn test_modality_from_mime_video() {
-        assert_eq!(Modality::from_mime_type("video/mp4"), Some(Modality::Video));
-        assert_eq!(
-            Modality::from_mime_type("video/quicktime"),
-            Some(Modality::Video)
-        );
-    }
-
-    #[test]
-    fn test_modality_from_mime_text() {
-        assert_eq!(Modality::from_mime_type("text/plain"), Some(Modality::Text));
-        assert_eq!(
-            Modality::from_mime_type("application/json"),
-            Some(Modality::Structured)
-        );
-    }
-
-    #[test]
-    fn test_modality_as_str() {
-        assert_eq!(Modality::Text.as_str(), "text");
-        assert_eq!(Modality::Audio.as_str(), "audio");
-        assert_eq!(Modality::Image.as_str(), "image");
-        assert_eq!(Modality::Video.as_str(), "video");
-        assert_eq!(Modality::Structured.as_str(), "structured");
-        assert_eq!(Modality::Binary.as_str(), "binary");
-        assert_eq!(Modality::Mixed.as_str(), "mixed");
-    }
-
-    #[test]
-    fn test_modality_unknown_extension() {
-        assert_eq!(Modality::from_file_extension("xyz"), None);
-        assert_eq!(Modality::from_file_extension("bin"), None);
-    }
-
-    // ============ WorkflowStep with Modality Tests ============
-
-    #[test]
-    fn test_workflow_step_with_modality() {
-        let step = WorkflowStep {
-            run: "WhisperPlugin".to_string(),
-            params: serde_yaml::Value::Null,
-            retries: None,
-            retry_delay: None,
-            cache_key: None,
-            input_from: None,
-            depends_on: None,
-            condition: None,
-            on_success: None,
-            on_failure: None,
-            for_each: None,
-            input_modality: Some(Modality::Audio),
-            output_modality: Some(Modality::Text),
-        };
-
-        assert_eq!(step.input_modality, Some(Modality::Audio));
-        assert_eq!(step.output_modality, Some(Modality::Text));
-    }
-
-    #[test]
-    fn test_workflow_step_serialization_with_modality() {
-        let workflow = Workflow {
-            workflow: "test".to_string(),
-            steps: vec![WorkflowStep {
-                run: "TestPlugin".to_string(),
-                params: serde_yaml::Value::Null,
-                retries: None,
-                retry_delay: None,
-                cache_key: None,
-                input_from: None,
-                depends_on: None,
-                condition: None,
-                on_success: None,
-                on_failure: None,
-                for_each: None,
-                input_modality: Some(Modality::Image),
-                output_modality: Some(Modality::Text),
-            }],
-        };
-
-        let yaml = serde_yaml::to_string(&workflow).expect("Failed to serialize");
-        let deserialized: Workflow = serde_yaml::from_str(&yaml).expect("Failed to deserialize");
-
-        assert_eq!(deserialized.steps[0].input_modality, Some(Modality::Image));
-        assert_eq!(deserialized.steps[0].output_modality, Some(Modality::Text));
-    }
-
-    // ============ Loop + Modality Integration Tests ============
-
-    #[test]
-    fn test_step_with_loop_and_modality() {
-        let step = WorkflowStep {
-            run: "AudioProcessor".to_string(),
-            params: serde_yaml::Value::Null,
-            retries: None,
-            retry_delay: None,
-            cache_key: None,
-            input_from: None,
-            depends_on: None,
-            condition: None,
-            on_success: None,
-            on_failure: None,
-            for_each: Some(LoopConfig {
-                items: LoopItems::Array(vec![
-                    serde_yaml::Value::String("audio1.mp3".to_string()),
-                    serde_yaml::Value::String("audio2.mp3".to_string()),
-                ]),
-                var: "audio_file".to_string(),
-                collect_results: true,
-                max_parallel: 2,
-            }),
-            input_modality: Some(Modality::Audio),
-            output_modality: Some(Modality::Text),
-        };
-
-        assert!(step.for_each.is_some());
-        assert_eq!(step.input_modality, Some(Modality::Audio));
-
-        let loop_config = step.for_each.unwrap();
-        assert_eq!(loop_config.var, "audio_file");
-        assert_eq!(loop_config.max_parallel, 2);
-    }
-
     // ============ StepCondition Tests ============
 
     #[test]
@@ -280,11 +109,7 @@ mod tests {
             input_from: None,
             depends_on: None,
             condition: None,
-            on_success: None,
-            on_failure: None,
             for_each: None,
-            input_modality: None,
-            output_modality: None,
         };
 
         let dag_node = DagNode {
@@ -312,11 +137,7 @@ mod tests {
                     input_from: None,
                     depends_on: None,
                     condition: None,
-                    on_success: None,
-                    on_failure: None,
                     for_each: None,
-                    input_modality: Some(Modality::Audio),
-                    output_modality: Some(Modality::Text),
                 },
                 WorkflowStep {
                     run: "Step2".to_string(),
@@ -327,11 +148,7 @@ mod tests {
                     input_from: Some("step1".to_string()),
                     depends_on: Some(vec!["step1".to_string()]),
                     condition: None,
-                    on_success: None,
-                    on_failure: None,
                     for_each: None,
-                    input_modality: Some(Modality::Text),
-                    output_modality: Some(Modality::Structured),
                 },
             ],
         };

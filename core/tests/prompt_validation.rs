@@ -85,11 +85,7 @@ fn test_invalid_workflow_step() {
             input_from: None,
             depends_on: None,
             condition: None,
-            on_success: None,
-            on_failure: None,
             for_each: None,
-            input_modality: None,
-            output_modality: None,
         }],
     };
     let dag = lao_orchestrator_core::build_dag(&workflow.steps).unwrap();

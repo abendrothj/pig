@@ -66,11 +66,7 @@ fn test_workflow_execution_success() {
             input_from: None,
             depends_on: None,
             condition: None,
-            on_success: None,
-            on_failure: None,
             for_each: None,
-            input_modality: None,
-            output_modality: None,
         }],
     };
     let path = "temp_workflow.yaml";
@@ -114,11 +110,7 @@ fn test_workflow_plugin_missing() {
             input_from: None,
             depends_on: None,
             condition: None,
-            on_success: None,
-            on_failure: None,
             for_each: None,
-            input_modality: None,
-            output_modality: None,
         }],
     };
     let dag = build_dag(&workflow.steps).unwrap();
@@ -126,6 +118,61 @@ fn test_workflow_plugin_missing() {
     let reg = PluginRegistry::dynamic_registry(plugin_dir.to_str().unwrap_or("plugins"));
     let errors = validate_workflow_types(&dag, &reg);
     assert!(!errors.is_empty(), "Should report error for missing plugin");
+}
+
+#[test]
+#[serial]
+fn test_workflow_state_recorded_on_success() {
+    if !check_plugins_available(&["EchoPlugin"]) {
+        return;
+    }
+
+    let state_dir = std::env::temp_dir().join(format!("lao_state_test_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&state_dir);
+    let previous = std::env::var("LAO_STATE_DIR").ok();
+    std::env::set_var("LAO_STATE_DIR", &state_dir);
+
+    let workflow = Workflow {
+        workflow: "State Recording".to_string(),
+        steps: vec![WorkflowStep {
+            run: "EchoPlugin".to_string(),
+            params: serde_yaml::from_str("input: 'recorded'").unwrap(),
+            retries: None,
+            retry_delay: None,
+            cache_key: None,
+            input_from: None,
+            depends_on: None,
+            condition: None,
+            for_each: None,
+        }],
+    };
+    let path = "temp_state_workflow.yaml";
+    fs::write(path, serde_yaml::to_string(&workflow).unwrap()).unwrap();
+
+    let _ = run_workflow_yaml(path).unwrap();
+
+    let entries: Vec<_> = fs::read_dir(&state_dir)
+        .expect("state dir should exist")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("json"))
+        .collect();
+    assert_eq!(
+        entries.len(),
+        1,
+        "exactly one run state should be persisted"
+    );
+
+    let contents = fs::read_to_string(entries[0].path()).unwrap();
+    assert!(contents.contains("State Recording"));
+    assert!(contents.contains("\"Completed\""));
+    assert!(contents.contains("EchoPlugin"));
+
+    fs::remove_file(path).unwrap();
+    let _ = fs::remove_dir_all(&state_dir);
+    match previous {
+        Some(v) => std::env::set_var("LAO_STATE_DIR", v),
+        None => std::env::remove_var("LAO_STATE_DIR"),
+    }
 }
 
 #[test]
@@ -142,11 +189,7 @@ fn test_workflow_invalid_step() {
             input_from: None,
             depends_on: None,
             condition: None,
-            on_success: None,
-            on_failure: None,
             for_each: None,
-            input_modality: None,
-            output_modality: None,
         }],
     };
     let dag = build_dag(&workflow.steps).unwrap();
@@ -288,11 +331,7 @@ fn test_caching_and_retries() {
             input_from: None,
             depends_on: None,
             condition: None,
-            on_success: None,
-            on_failure: None,
             for_each: None,
-            input_modality: None,
-            output_modality: None,
         }],
     };
     let path = "temp_cache.yaml";
@@ -346,11 +385,7 @@ fn test_log_output() {
             input_from: None,
             depends_on: None,
             condition: None,
-            on_success: None,
-            on_failure: None,
             for_each: None,
-            input_modality: None,
-            output_modality: None,
         }],
     };
     let path = "temp_log.yaml";
@@ -382,8 +417,7 @@ fn test_log_output() {
 
 #[test]
 #[serial]
-fn test_multi_plugin_workflow() {
-    // This test assumes Echo and SummarizerPlugin plugins exist and are compatible
+fn test_network_plugin_workflow_requires_trust() {
     let workflow = Workflow {
         workflow: "Multi-Plugin Chain".to_string(),
         steps: vec![
@@ -396,11 +430,7 @@ fn test_multi_plugin_workflow() {
                 input_from: None,
                 depends_on: None,
                 condition: None,
-                on_success: None,
-                on_failure: None,
                 for_each: None,
-                input_modality: None,
-                output_modality: None,
             },
             WorkflowStep {
                 run: "SummarizerPlugin".to_string(),
@@ -411,11 +441,7 @@ fn test_multi_plugin_workflow() {
                 input_from: Some("EchoPlugin".to_string()),
                 depends_on: None,
                 condition: None,
-                on_success: None,
-                on_failure: None,
                 for_each: None,
-                input_modality: None,
-                output_modality: None,
             },
         ],
     };
@@ -428,12 +454,9 @@ fn test_multi_plugin_workflow() {
         return;
     }
 
-    let logs = run_workflow_yaml(path).unwrap();
-    println!("[DEBUG] multi_plugin logs: {:?}", logs);
-    assert!(
-        logs.iter().any(|log| log.runner == "SummarizerPlugin"),
-        "SummarizerPlugin step should run"
-    );
+    let err = run_workflow_yaml(path).expect_err("network-capable plugin should require trust");
+    assert!(err.contains("SummarizerPlugin"));
+    assert!(err.contains("Network"));
     fs::remove_file(path).unwrap();
 }
 
@@ -452,11 +475,7 @@ fn test_circular_dependency() {
                 input_from: Some("step2".to_string()),
                 depends_on: None,
                 condition: None,
-                on_success: None,
-                on_failure: None,
                 for_each: None,
-                input_modality: None,
-                output_modality: None,
             },
             WorkflowStep {
                 run: "SummarizerPlugin".to_string(),
@@ -467,11 +486,7 @@ fn test_circular_dependency() {
                 input_from: Some("step1".to_string()),
                 depends_on: None,
                 condition: None,
-                on_success: None,
-                on_failure: None,
                 for_each: None,
-                input_modality: None,
-                output_modality: None,
             },
         ],
     };
@@ -509,11 +524,7 @@ fn test_plugin_type_mismatch() {
             input_from: None,
             depends_on: None,
             condition: None,
-            on_success: None,
-            on_failure: None,
             for_each: None,
-            input_modality: None,
-            output_modality: None,
         }],
     };
     let path = "temp_type_mismatch.yaml";
@@ -551,11 +562,7 @@ fn test_conditional_execution() {
                 input_from: None,
                 depends_on: None,
                 condition: None,
-                on_success: None,
-                on_failure: None,
                 for_each: None,
-                input_modality: None,
-                output_modality: None,
             },
             // Step 2: Should run (OutputContains "trigger")
             WorkflowStep {
@@ -572,11 +579,7 @@ fn test_conditional_execution() {
                     operator: ConditionOperator::Contains,
                     value: "trigger".to_string(),
                 }),
-                on_success: None,
-                on_failure: None,
                 for_each: None,
-                input_modality: None,
-                output_modality: None,
             },
             // Step 3: Should skip (OutputContains "foobar")
             WorkflowStep {
@@ -593,11 +596,7 @@ fn test_conditional_execution() {
                     operator: ConditionOperator::Contains,
                     value: "foobar".to_string(),
                 }),
-                on_success: None,
-                on_failure: None,
                 for_each: None,
-                input_modality: None,
-                output_modality: None,
             },
         ],
     };

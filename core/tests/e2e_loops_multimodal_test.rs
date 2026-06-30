@@ -1,4 +1,4 @@
-//! End-to-end tests for loops, multimodal, and combined workflows.
+//! End-to-end tests for loops and combined workflows.
 //! These tests actually execute workflows through the full pipeline:
 //! YAML -> DAG -> plugin loading -> execution -> output verification.
 
@@ -6,7 +6,7 @@ use lao_orchestrator_core::cross_platform::PathUtils;
 use lao_orchestrator_core::plugins::PluginRegistry;
 use lao_orchestrator_core::{
     run_workflow_yaml_parallel_with_callback, ConditionOperator, ConditionType, LoopConfig,
-    LoopItems, Modality, StepCondition, StepEvent, Workflow, WorkflowStep,
+    LoopItems, StepCondition, StepEvent, Workflow, WorkflowStep,
 };
 use serial_test::serial;
 use std::fs;
@@ -54,11 +54,7 @@ fn echo_step(input: &str) -> WorkflowStep {
         input_from: None,
         depends_on: None,
         condition: None,
-        on_success: None,
-        on_failure: None,
         for_each: None,
-        input_modality: None,
-        output_modality: None,
     }
 }
 
@@ -249,92 +245,21 @@ fn test_loop_output_feeds_next_step() {
 }
 
 // ========================
-// Modality detection tests (runtime)
-// ========================
-
-#[test]
-fn test_modality_from_file_extension() {
-    assert_eq!(Modality::from_file_extension("mp3"), Some(Modality::Audio));
-    assert_eq!(Modality::from_file_extension("wav"), Some(Modality::Audio));
-    assert_eq!(Modality::from_file_extension("png"), Some(Modality::Image));
-    assert_eq!(Modality::from_file_extension("jpg"), Some(Modality::Image));
-    assert_eq!(Modality::from_file_extension("mp4"), Some(Modality::Video));
-    assert_eq!(Modality::from_file_extension("txt"), Some(Modality::Text));
-    assert_eq!(Modality::from_file_extension("json"), Some(Modality::Text));
-    assert_eq!(Modality::from_file_extension("xyz"), None);
-}
-
-#[test]
-fn test_modality_from_mime_type() {
-    assert_eq!(
-        Modality::from_mime_type("audio/mpeg"),
-        Some(Modality::Audio)
-    );
-    assert_eq!(Modality::from_mime_type("image/png"), Some(Modality::Image));
-    assert_eq!(Modality::from_mime_type("video/mp4"), Some(Modality::Video));
-    assert_eq!(Modality::from_mime_type("text/plain"), Some(Modality::Text));
-    assert_eq!(
-        Modality::from_mime_type("application/json"),
-        Some(Modality::Structured)
-    );
-    assert_eq!(
-        Modality::from_mime_type("application/octet-stream"),
-        Some(Modality::Binary)
-    );
-}
-
-// ========================
-// Multimodal workflow execution
+// Combined: Loop + Condition
 // ========================
 
 #[test]
 #[serial]
-fn test_workflow_with_modality_annotations() {
-    if !check_plugins_available(&["EchoPlugin"]) {
-        return;
-    }
-
-    // Modality annotations should be preserved through execution without breaking it
-    let workflow = Workflow {
-        workflow: "Modality Annotation Test".to_string(),
-        steps: vec![
-            WorkflowStep {
-                input_modality: Some(Modality::Text),
-                output_modality: Some(Modality::Text),
-                ..echo_step("text input")
-            },
-            WorkflowStep {
-                input_from: Some("step1".to_string()),
-                depends_on: Some(vec!["step1".to_string()]),
-                input_modality: Some(Modality::Text),
-                output_modality: Some(Modality::Structured),
-                ..echo_step("structured output")
-            },
-        ],
-    };
-
-    let (logs, _events) = run_workflow_parallel(&workflow);
-
-    assert_eq!(logs.len(), 2, "Both steps should execute");
-    assert!(logs.iter().all(|l| l.error.is_none()), "No errors expected");
-}
-
-// ========================
-// Combined: Loop + Modality + Condition
-// ========================
-
-#[test]
-#[serial]
-fn test_loop_with_modality_annotations() {
+fn test_loop_with_condition_ready_shape() {
     if !check_plugins_available(&["EchoPlugin"]) {
         return;
     }
 
     let workflow = Workflow {
-        workflow: "Loop + Modality Test".to_string(),
+        workflow: "Loop + Condition Shape Test".to_string(),
         steps: vec![WorkflowStep {
             run: "EchoPlugin".to_string(),
-            params: serde_yaml::from_str("input: 'multimodal loop'").unwrap(),
+            params: serde_yaml::from_str("input: 'loop input'").unwrap(),
             for_each: Some(LoopConfig {
                 items: LoopItems::Array(vec![
                     serde_yaml::Value::String("file1.mp3".to_string()),
@@ -344,9 +269,7 @@ fn test_loop_with_modality_annotations() {
                 collect_results: true,
                 max_parallel: 2,
             }),
-            input_modality: Some(Modality::Audio),
-            output_modality: Some(Modality::Text),
-            ..echo_step("multimodal loop")
+            ..echo_step("loop input")
         }],
     };
 
@@ -355,7 +278,7 @@ fn test_loop_with_modality_annotations() {
     assert_eq!(logs.len(), 1);
     let output = logs[0].output.as_ref().expect("Should have output");
     let results: Vec<String> = serde_json::from_str(output).expect("JSON array");
-    assert_eq!(results.len(), 2, "Both audio files should be processed");
+    assert_eq!(results.len(), 2, "Both items should be processed");
 }
 
 #[test]
@@ -400,10 +323,6 @@ fn test_conditional_then_loop_pipeline() {
                 retry_delay: None,
                 cache_key: None,
                 condition: None,
-                on_success: None,
-                on_failure: None,
-                input_modality: Some(Modality::Text),
-                output_modality: Some(Modality::Structured),
             },
         ],
     };
@@ -480,10 +399,6 @@ fn test_conditional_skips_then_loop_still_runs() {
                 input_from: None,
                 depends_on: None,
                 condition: None,
-                on_success: None,
-                on_failure: None,
-                input_modality: None,
-                output_modality: None,
             },
         ],
     };
@@ -550,31 +465,23 @@ fn test_full_multimodal_pipeline() {
                     collect_results: true,
                     max_parallel: 2,
                 }),
-                input_modality: Some(Modality::Audio),
-                output_modality: Some(Modality::Text),
                 retries: Some(2),
                 retry_delay: None,
                 cache_key: None,
                 input_from: None,
                 depends_on: None,
                 condition: None,
-                on_success: None,
-                on_failure: None,
             },
             // Step 2: "Summarize" the transcriptions (Text -> Text)
             WorkflowStep {
                 input_from: Some("step1".to_string()),
                 depends_on: Some(vec!["step1".to_string()]),
-                input_modality: Some(Modality::Text),
-                output_modality: Some(Modality::Text),
                 ..echo_step("summary of transcriptions")
             },
             // Step 3: "Extract insights" as JSON (Text -> Structured)
             WorkflowStep {
                 input_from: Some("step2".to_string()),
                 depends_on: Some(vec!["step2".to_string()]),
-                input_modality: Some(Modality::Text),
-                output_modality: Some(Modality::Structured),
                 ..echo_step("structured insights")
             },
         ],
@@ -639,8 +546,6 @@ steps:
       var: "batch_item"
       collect_results: true
       max_parallel: 3
-    input_modality: text
-    output_modality: text
 "#;
 
     let path = format!("temp_yaml_loop_{}.yaml", std::process::id());

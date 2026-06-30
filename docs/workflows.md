@@ -87,10 +87,9 @@ When running in parallel mode, LAO tracks:
 
 ## Advanced Features
 
-- **Conditional/Branching Steps**: if/else, loops, parameterized flows ✅
+- **Conditional/Branching Steps**: output/status/error-based conditions and loops ✅
 - **Parallel Execution**: Level-based concurrent execution ✅
 - **Parameter Injection**: Securely pass secrets, user data, etc.
-- **Modality Annotations**: Optional step metadata for text, audio, image, video, structured, binary, or mixed inputs.
 
 ## Contributing Workflows
 - Add new prompt/workflow pairs to the prompt library for validation and LLM tuning

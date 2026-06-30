@@ -842,7 +842,7 @@ fn fuzz_test_plugin_info_from_metadata() {
         !stats.has_failures(),
         "Fuzzer found {} panics and {} validation failures in PluginInfo::from_metadata",
         stats.panics,
-        stats.validation_failures,
+        stats.validation_failures
     );
 }
 
@@ -866,7 +866,7 @@ fn fuzz_test_metadata_json_parsing() {
         !stats.has_failures(),
         "Fuzzer found {} panics and {} validation failures in metadata JSON parsing",
         stats.panics,
-        stats.validation_failures,
+        stats.validation_failures
     );
 }
 
@@ -890,7 +890,7 @@ fn fuzz_test_multimodal_input_construction() {
         !stats.has_failures(),
         "Fuzzer found {} panics and {} validation failures in MultiModalInput construction",
         stats.panics,
-        stats.validation_failures,
+        stats.validation_failures
     );
 }
 
@@ -940,7 +940,7 @@ fn fuzz_test_echo_plugin_run() {
         !stats.has_failures(),
         "Fuzzer found {} panics and {} validation failures in EchoPlugin::run",
         stats.panics,
-        stats.validation_failures,
+        stats.validation_failures
     );
 }
 
@@ -973,7 +973,7 @@ fn fuzz_test_echo_plugin_validate_input() {
         !stats.has_failures(),
         "Fuzzer found {} panics and {} validation failures in EchoPlugin::validate_input",
         stats.panics,
-        stats.validation_failures,
+        stats.validation_failures
     );
 }
 
@@ -1006,7 +1006,7 @@ fn fuzz_test_echo_plugin_run_with_buffer() {
         !stats.has_failures(),
         "Fuzzer found {} panics and {} validation failures in EchoPlugin::run_with_buffer",
         stats.panics,
-        stats.validation_failures,
+        stats.validation_failures
     );
 }
 

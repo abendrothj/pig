@@ -1,0 +1,19 @@
+[trust]
+# Keep dangerous capabilities disabled unless a workflow is trusted.
+allow_filesystem_read = false
+allow_filesystem_write = false
+allow_filesystem_enumerate = false
+allow_shell = false
+allow_network = false
+allow_subprocess = false
+
+# Explicit filesystem roots only — no implicit cwd/repo root.
+# Required when any filesystem_* capability is enabled.
+filesystem_roots = []
+
+# Allowed network endpoints (host, host:port, or URL prefix).
+# Required when allow_network is true unless you use allow_plugins.
+network_endpoints = []
+
+# Optional escape hatch for specific trusted plugins.
+allow_plugins = []

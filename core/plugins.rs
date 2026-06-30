@@ -1,7 +1,8 @@
 use crate::cross_platform::{PathUtils, Platform};
+use crate::plugin_result::PluginRunResult;
 use lao_plugin_api::*;
 use libloading::{Library, Symbol};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString};
 use std::path::Path;
 use std::sync::Arc;
@@ -28,6 +29,12 @@ impl PluginInstance {
 
             let vtable_ref = &*vtable;
             tracing::debug!("VTable version: {}", vtable_ref.version);
+            if vtable_ref.version != LAO_PLUGIN_ABI_VERSION {
+                return Err(format!(
+                    "Unsupported plugin ABI version {} (expected {})",
+                    vtable_ref.version, LAO_PLUGIN_ABI_VERSION
+                ));
+            }
 
             let metadata = (vtable_ref.get_metadata)();
             tracing::debug!("Got metadata from plugin");
@@ -47,30 +54,46 @@ impl PluginInstance {
         unsafe { ((*self.vtable).validate_input)(input) }
     }
 
-    /// Execute the plugin with a pre-built PluginInput, returning the output string.
-    /// Encapsulates the unsafe vtable call, null checks, and memory cleanup.
-    pub fn run_plugin(&self, input: &PluginInput) -> Result<String, String> {
+    /// Execute the plugin with a pre-built PluginInput.
+    pub fn run_plugin(&self, input: &PluginInput) -> PluginRunResult {
         if self.vtable.is_null() {
-            return Err("Plugin vtable is null".to_string());
+            return PluginRunResult::runtime_error("Plugin vtable is null");
+        }
+        if !self.validate_input(input) {
+            return PluginRunResult::validation_failed(format!(
+                "Plugin '{}' rejected input",
+                self.info.name
+            ));
         }
         unsafe {
             let result = ((*self.vtable).run)(input);
             if result.text.is_null() {
-                return Err(format!("Plugin '{}' returned null output", self.info.name));
+                return PluginRunResult::runtime_error(format!(
+                    "Plugin '{}' returned null output",
+                    self.info.name
+                ));
             }
             let output_str = CStr::from_ptr(result.text).to_string_lossy().to_string();
             ((*self.vtable).free_output)(result);
-            Ok(output_str)
+            PluginRunResult::from_plugin_text(output_str)
         }
     }
 
     /// Convenience: build a PluginInput from a string and run the plugin.
-    pub fn run_with_text(&self, text: &str) -> Result<String, String> {
-        let c_string = CString::new(text).map_err(|e| format!("Invalid input string: {}", e))?;
-        let input = PluginInput {
-            text: c_string.into_raw(),
+    pub fn run_with_text(&self, text: &str) -> PluginRunResult {
+        let c_string = match CString::new(text) {
+            Ok(s) => s,
+            Err(e) => {
+                return PluginRunResult::runtime_error(format!("Invalid input string: {}", e))
+            }
         };
-        self.run_plugin(&input)
+        let raw_text = c_string.into_raw();
+        let input = PluginInput { text: raw_text };
+        let result = self.run_plugin(&input);
+        unsafe {
+            let _ = CString::from_raw(raw_text);
+        }
+        result
     }
 
     pub fn get_capabilities(&self) -> Vec<PluginCapability> {
@@ -91,6 +114,7 @@ pub struct PluginRegistry {
     pub plugins: HashMap<String, PluginInstance>,
     pub plugin_versions: HashMap<String, Vec<String>>, // name -> versions
     pub plugin_dependencies: HashMap<String, Vec<PluginDependency>>,
+    loaded_paths: HashSet<std::path::PathBuf>,
 }
 
 // Safety: PluginRegistry is only accessed through Mutex in parallel execution,
@@ -110,6 +134,7 @@ impl PluginRegistry {
             plugins: HashMap::new(),
             plugin_versions: HashMap::new(),
             plugin_dependencies: HashMap::new(),
+            loaded_paths: HashSet::new(),
         }
     }
 
@@ -152,7 +177,10 @@ impl PluginRegistry {
         let mut found_files = 0;
         let mut loaded_count = 0;
 
-        for entry in entries.filter_map(|e| e.ok()) {
+        let mut entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+        entries.sort_by_key(|e| e.path());
+
+        for entry in entries {
             let path = entry.path();
 
             if path.is_dir() {
@@ -173,8 +201,9 @@ impl PluginRegistry {
                 tracing::debug!("Found plugin file in root: {}", path.display());
                 match self.load_plugin(&path) {
                     Ok(plugin) => {
-                        self.register_plugin(plugin);
-                        loaded_count += 1;
+                        if self.try_register_plugin(plugin, &path) {
+                            loaded_count += 1;
+                        }
                     }
                     Err(e) => {
                         tracing::error!("Failed to load plugin {}: {}", path.display(), e);
@@ -221,8 +250,9 @@ impl PluginRegistry {
                 tracing::debug!("Found plugin: {}", fpath.display());
                 match self.load_plugin(&fpath) {
                     Ok(plugin) => {
-                        self.register_plugin(plugin);
-                        loaded += 1;
+                        if self.try_register_plugin(plugin, &fpath) {
+                            loaded += 1;
+                        }
                     }
                     Err(e) => {
                         tracing::error!("Failed to load plugin {}: {}", fpath.display(), e);
@@ -283,21 +313,49 @@ impl PluginRegistry {
         }
     }
 
-    pub fn register_plugin(&mut self, plugin: PluginInstance) {
+    pub fn register_plugin(&mut self, plugin: PluginInstance) -> Result<(), String> {
         let name = plugin.info.name.clone();
         let version = plugin.info.version.clone();
         let dependencies = plugin.info.dependencies.clone();
 
+        if self.plugins.contains_key(&name) {
+            return Err(format!(
+                "Duplicate plugin '{}'; keeping first loaded instance (version {})",
+                name,
+                self.plugins
+                    .get(&name)
+                    .map(|p| p.info.version.as_str())
+                    .unwrap_or("?")
+            ));
+        }
         self.plugins.insert(name.clone(), plugin);
 
-        self.plugin_versions
-            .entry(name.clone())
-            .or_default()
-            .push(version.clone());
+        let versions = self.plugin_versions.entry(name.clone()).or_default();
+        if !versions.contains(&version) {
+            versions.push(version.clone());
+        }
 
         self.plugin_dependencies.insert(name.clone(), dependencies);
 
         tracing::info!("Loaded plugin: {} (version: {})", name, version);
+        Ok(())
+    }
+
+    fn try_register_plugin(&mut self, plugin: PluginInstance, path: &Path) -> bool {
+        if self.loaded_paths.contains(path) {
+            tracing::debug!("Skipping already-loaded plugin path: {}", path.display());
+            return false;
+        }
+        match self.register_plugin(plugin) {
+            Ok(()) => {
+                self.loaded_paths.insert(path.to_path_buf());
+                true
+            }
+            Err(e) => {
+                tracing::warn!("{}", e);
+                false
+            }
+        }
     }
 
     pub fn plugin_count(&self) -> usize {
@@ -518,5 +576,59 @@ mod tests {
         let path = Path::new(&name);
         assert!(registry.is_shared_library_file(path));
         assert!(!registry.is_shared_library_file(Path::new("foo.txt")));
+    }
+
+    fn built_echo_plugin_path() -> Option<std::path::PathBuf> {
+        let ext = Platform::shared_lib_extension();
+        let prefix = Platform::shared_lib_prefix();
+        let candidate = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../plugins/EchoPlugin/target/release")
+            .join(format!("{}echo_plugin.{}", prefix, ext));
+        if candidate.exists() {
+            Some(candidate)
+        } else {
+            None
+        }
+    }
+
+    #[test]
+    fn test_duplicate_registration_rejected_keeps_first() {
+        let Some(path) = built_echo_plugin_path() else {
+            eprintln!("EchoPlugin not built; skipping duplicate-registration test");
+            return;
+        };
+        let mut registry = PluginRegistry::new();
+
+        let first = registry.load_plugin(&path).expect("load echo plugin");
+        let first_version = first.info.version.clone();
+        assert!(registry.register_plugin(first).is_ok());
+
+        let second = registry.load_plugin(&path).expect("load echo plugin again");
+        let result = registry.register_plugin(second);
+        assert!(result.is_err(), "duplicate registration must be rejected");
+        assert_eq!(registry.plugin_count(), 1);
+        assert_eq!(
+            registry.get("EchoPlugin").unwrap().info.version,
+            first_version,
+            "first instance must be kept"
+        );
+    }
+
+    #[test]
+    fn test_directory_scan_dedups_plugins() {
+        let Some(_) = built_echo_plugin_path() else {
+            eprintln!("EchoPlugin not built; skipping directory dedup test");
+            return;
+        };
+        let plugin_dir = PathUtils::plugin_dir();
+        let registry = PluginRegistry::dynamic_registry(plugin_dir.to_str().unwrap_or("plugins"));
+        let mut names = registry.plugin_names();
+        names.sort();
+        let mut deduped = names.clone();
+        deduped.dedup();
+        assert_eq!(
+            names, deduped,
+            "registry must not contain duplicate plugins"
+        );
     }
 }

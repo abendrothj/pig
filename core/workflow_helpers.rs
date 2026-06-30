@@ -1,6 +1,7 @@
 use lao_plugin_api::PluginInput;
 use std::collections::HashMap;
 use std::ffi::CString;
+use std::ops::Deref;
 
 use crate::workflow_types::*;
 
@@ -23,28 +24,55 @@ pub fn substitute_vars(s: &str, outputs: &HashMap<String, String>) -> String {
     result
 }
 
-pub fn build_plugin_input(params: &serde_yaml::Value) -> PluginInput {
+pub struct OwnedPluginInput {
+    input: PluginInput,
+}
+
+impl OwnedPluginInput {
+    pub fn new(text: String) -> Self {
+        let c_string = CString::new(text).unwrap_or_else(|_| {
+            CString::new("error: invalid input string").expect("static string")
+        });
+        Self {
+            input: PluginInput {
+                text: c_string.into_raw(),
+            },
+        }
+    }
+}
+
+impl Deref for OwnedPluginInput {
+    type Target = PluginInput;
+
+    fn deref(&self) -> &Self::Target {
+        &self.input
+    }
+}
+
+impl Drop for OwnedPluginInput {
+    fn drop(&mut self) {
+        if !self.input.text.is_null() {
+            unsafe {
+                let _ = CString::from_raw(self.input.text);
+            }
+            self.input.text = std::ptr::null_mut();
+        }
+    }
+}
+
+pub fn build_plugin_input(params: &serde_yaml::Value) -> OwnedPluginInput {
     // Try to extract the "input" field first, fallback to full YAML
     if let Some(mapping) = params.as_mapping() {
         if let Some(input_val) = mapping.get("input") {
             if let Some(input_str) = input_val.as_str() {
-                let c_string = CString::new(input_str).unwrap_or_else(|_| {
-                    CString::new("error: invalid input string").expect("static string")
-                });
-                return PluginInput {
-                    text: c_string.into_raw(),
-                };
+                return OwnedPluginInput::new(input_str.to_string());
             }
         }
     }
 
     // Fallback: serialize the entire params object
     let text = serde_yaml::to_string(params).unwrap_or_default();
-    let c_string = CString::new(text)
-        .unwrap_or_else(|_| CString::new("error: invalid params").expect("static string"));
-    PluginInput {
-        text: c_string.into_raw(),
-    }
+    OwnedPluginInput::new(text)
 }
 
 // Compute default cache key when user does not provide one.

@@ -4,10 +4,16 @@ use std::fs;
 use std::{thread, time::Duration};
 
 use crate::cross_platform::PathUtils;
+use crate::plugin_result::PluginRunResult;
 use crate::plugins::*;
+use crate::state_manager::WorkflowStateManager;
+use crate::trust::TrustPolicy;
 use crate::workflow_dag::*;
 use crate::workflow_helpers::*;
+use crate::workflow_state::{StepResult, StepStatus, WorkflowState};
 use crate::workflow_types::*;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 /// Execute a step with loop/iteration support
 /// Returns Vec of outputs if collecting results, or last output if not
@@ -59,7 +65,12 @@ pub fn execute_with_loop(
                 let plugin_opt = reg_guard.get(&step_clone.run);
 
                 if let Some(plugin) = plugin_opt {
-                    plugin.run_plugin(&plugin_input)
+                    let result = plugin.run_plugin(&plugin_input);
+                    if result.is_success() {
+                        Ok(result.output.unwrap_or_default())
+                    } else {
+                        Err(result.display_error())
+                    }
                 } else {
                     Err(format!("Plugin '{}' not found", step_clone.run))
                 }
@@ -124,6 +135,78 @@ pub fn group_by_execution_levels(dag: &[DagNode]) -> Vec<Vec<String>> {
     levels
 }
 
+fn plugin_input_text(params: &serde_yaml::Value) -> String {
+    if let Some(mapping) = params.as_mapping() {
+        if let Some(input_val) = mapping.get("input") {
+            if let Some(s) = input_val.as_str() {
+                return s.to_string();
+            }
+        }
+    }
+    serde_yaml::to_string(params).unwrap_or_default()
+}
+
+fn new_workflow_run_id(path: &str) -> String {
+    let mut h = DefaultHasher::new();
+    path.hash(&mut h);
+    if let Ok(duration) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        duration.as_nanos().hash(&mut h);
+    }
+    format!("{:016x}", h.finish())
+}
+
+fn record_workflow_state(path: &str, workflow: &Workflow, dag_len: usize, logs: &[StepLog]) {
+    let state_dir = std_env::var("LAO_STATE_DIR").unwrap_or_else(|_| "workflow_states".to_string());
+    let Ok(mut manager) = WorkflowStateManager::new(&state_dir) else {
+        tracing::warn!("Failed to open workflow state dir: {}", state_dir);
+        return;
+    };
+
+    let workflow_id = new_workflow_run_id(path);
+    let mut state = WorkflowState::new(workflow_id, workflow.workflow.clone(), dag_len);
+    state.workflow_path = Some(path.to_string());
+    state.start();
+
+    for log in logs {
+        let status = if log.error.is_some() {
+            StepStatus::Failed
+        } else if log.validation.as_deref().is_some_and(|v| v == "skipped") {
+            StepStatus::Skipped
+        } else {
+            StepStatus::Success
+        };
+        state.add_step_result(StepResult {
+            step_id: log.step_id.clone(),
+            plugin_name: log.runner.clone(),
+            status,
+            output: log.output.clone(),
+            error: log.error.clone(),
+            started_at: std::time::SystemTime::now(),
+            completed_at: Some(std::time::SystemTime::now()),
+            duration_ms: None,
+            retry_count: log.attempt.saturating_sub(1),
+        });
+        if let Some(out) = &log.output {
+            state.outputs.insert(log.step_id.clone(), out.clone());
+        }
+    }
+
+    if logs.iter().any(|l| l.error.is_some()) {
+        let msg = logs
+            .iter()
+            .find_map(|l| l.error.as_ref())
+            .cloned()
+            .unwrap_or_else(|| "workflow step failed".to_string());
+        state.fail(msg);
+    } else {
+        state.complete();
+    }
+
+    if let Err(e) = manager.save_state(&state) {
+        tracing::warn!("Failed to persist workflow state: {}", e);
+    }
+}
+
 // Parallel execution by levels (nodes on same level run concurrently)
 // Strategy: Continue on error (other parallel steps still execute even if one fails)
 pub fn run_workflow_yaml_parallel_with_callback<F>(
@@ -134,6 +217,8 @@ where
     F: FnMut(StepEvent) + Send,
 {
     let workflow = load_workflow_yaml(path)?;
+    let trust_policy = TrustPolicy::load_default();
+    trust_policy.validate_workflow(&workflow)?;
     let dag = build_dag(&workflow.steps)?;
     let registry = std::sync::Arc::new(std::sync::Mutex::new(PluginRegistry::default_registry()));
 
@@ -203,6 +288,7 @@ where
             let step_counter_clone = step_counter.clone();
             let event_tx_clone = event_tx.clone();
             let registry_clone = registry.clone();
+            let trust_clone = trust_policy.clone();
 
             let handle = std::thread::spawn(move || {
                 let step_idx = step_counter_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -359,6 +445,7 @@ where
                 }
 
                 let plugin_input = build_plugin_input(&params);
+                let input_text = plugin_input_text(&params);
 
                 // Get plugin info (need version for cache key)
                 let plugin_info = {
@@ -465,23 +552,26 @@ where
                     });
 
                     // Execute plugin (serialized access through registry lock)
-                    let (output_str, success) = {
-                        let reg_guard = registry_clone
-                            .lock()
-                            .expect("plugin registry mutex poisoned");
-                        if let Some(plugin) = reg_guard.get(&plugin_name) {
-                            let output = plugin
-                                .run_plugin(&plugin_input)
-                                .unwrap_or_else(|e| format!("error: {}", e));
-                            let is_success = !output.trim().is_empty()
-                                && !output.trim().to_lowercase().starts_with("error:");
-                            (output, is_success)
+                    let run_result: PluginRunResult = {
+                        if let Err(e) = trust_clone.validate_step_input(&plugin_name, &input_text) {
+                            PluginRunResult::runtime_error(e)
                         } else {
-                            (format!("Plugin '{}' not found", plugin_name), false)
+                            let reg_guard = registry_clone
+                                .lock()
+                                .expect("plugin registry mutex poisoned");
+                            if let Some(plugin) = reg_guard.get(&plugin_name) {
+                                plugin.run_plugin(&plugin_input)
+                            } else {
+                                PluginRunResult::runtime_error(format!(
+                                    "Plugin '{}' not found",
+                                    plugin_name
+                                ))
+                            }
                         }
                     };
 
-                    if success {
+                    if run_result.is_success() {
+                        let output_str = run_result.output.unwrap_or_default();
                         let mut outputs_guard =
                             outputs_clone.lock().expect("outputs mutex poisoned");
                         outputs_guard.insert(node_id_clone.clone(), output_str.clone());
@@ -489,10 +579,14 @@ where
                         // Save to cache if cache_key is set
                         if step.cache_key.is_some() {
                             fs::create_dir_all(&cache_dir).ok();
-                            let _ = fs::write(
+                            if fs::write(
                                 &cache_path,
                                 serde_json::to_string(&output_str).unwrap_or_default(),
-                            );
+                            )
+                            .is_ok()
+                            {
+                                cache_status = Some("saved".to_string());
+                            }
                         }
 
                         let _ = event_tx_clone.send(StepEvent {
@@ -521,6 +615,7 @@ where
                         });
                         return;
                     } else {
+                        let output_str = run_result.display_error();
                         last_error = Some(output_str.clone());
                         let _ = event_tx_clone.send(StepEvent {
                             step: step_idx,
@@ -592,6 +687,7 @@ where
     };
 
     logs.sort_by_key(|l| l.step);
+    record_workflow_state(path, &workflow, dag.len(), &logs);
     Ok(logs)
 }
 
@@ -614,12 +710,8 @@ mod tests {
                 retry_delay: None,
                 cache_key: None,
                 input_from: None,
-                input_modality: None,
-                output_modality: None,
                 for_each: None,
                 condition: None,
-                on_success: None,
-                on_failure: None,
             },
             parents: parents.iter().map(|p| p.to_string()).collect(),
         }

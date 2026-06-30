@@ -8,7 +8,36 @@ use crate::workflow_types::*;
 
 pub fn load_workflow_yaml(path: &str) -> Result<Workflow, String> {
     let yaml_str = fs::read_to_string(path).map_err(|e| e.to_string())?;
-    serde_yaml::from_str::<Workflow>(&yaml_str).map_err(|e| e.to_string())
+    let workflow = serde_yaml::from_str::<Workflow>(&yaml_str).map_err(|e| e.to_string())?;
+    validate_workflow_schema(&workflow)?;
+    Ok(workflow)
+}
+
+pub fn validate_workflow_schema(workflow: &Workflow) -> Result<(), String> {
+    const UNSUPPORTED_FIELDS: &[&str] = &[
+        "on_success",
+        "on_failure",
+        "input_modality",
+        "output_modality",
+    ];
+
+    for (idx, step) in workflow.steps.iter().enumerate() {
+        let Some(mapping) = step.params.as_mapping() else {
+            continue;
+        };
+
+        for field in UNSUPPORTED_FIELDS {
+            if mapping.contains_key(serde_yaml::Value::String((*field).to_string())) {
+                return Err(format!(
+                    "Unsupported workflow field '{}' in step {}. This field is not part of the production schema.",
+                    field,
+                    idx + 1
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 pub fn build_dag(steps: &[WorkflowStep]) -> Result<Vec<DagNode>, String> {
@@ -151,11 +180,7 @@ mod tests {
             input_from: None,
             depends_on: None,
             condition: None,
-            on_success: None,
-            on_failure: None,
             for_each: None,
-            input_modality: None,
-            output_modality: None,
         }];
 
         let dag = build_dag(&steps).unwrap();
@@ -176,11 +201,7 @@ mod tests {
                 input_from: None,
                 depends_on: None,
                 condition: None,
-                on_success: None,
-                on_failure: None,
                 for_each: None,
-                input_modality: None,
-                output_modality: None,
             },
             WorkflowStep {
                 run: "Step2".to_string(),
@@ -191,11 +212,7 @@ mod tests {
                 input_from: Some("step1".to_string()),
                 depends_on: None,
                 condition: None,
-                on_success: None,
-                on_failure: None,
                 for_each: None,
-                input_modality: None,
-                output_modality: None,
             },
         ];
 
@@ -217,11 +234,7 @@ mod tests {
                 input_from: None,
                 depends_on: None,
                 condition: None,
-                on_success: None,
-                on_failure: None,
                 for_each: None,
-                input_modality: None,
-                output_modality: None,
             },
             WorkflowStep {
                 run: "B".to_string(),
@@ -232,11 +245,7 @@ mod tests {
                 input_from: Some("step1".to_string()),
                 depends_on: None,
                 condition: None,
-                on_success: None,
-                on_failure: None,
                 for_each: None,
-                input_modality: None,
-                output_modality: None,
             },
         ];
 
@@ -257,11 +266,7 @@ mod tests {
                 input_from: Some("step2".to_string()),
                 depends_on: None,
                 condition: None,
-                on_success: None,
-                on_failure: None,
                 for_each: None,
-                input_modality: None,
-                output_modality: None,
             },
             WorkflowStep {
                 run: "B".to_string(),
@@ -272,11 +277,7 @@ mod tests {
                 input_from: Some("step1".to_string()),
                 depends_on: None,
                 condition: None,
-                on_success: None,
-                on_failure: None,
                 for_each: None,
-                input_modality: None,
-                output_modality: None,
             },
         ];
 

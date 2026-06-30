@@ -6,6 +6,8 @@ use std::time::SystemTime;
 pub struct WorkflowState {
     pub workflow_id: String,
     pub workflow_name: String,
+    #[serde(default)]
+    pub workflow_path: Option<String>,
     pub status: WorkflowStatus,
     pub created_at: SystemTime,
     pub started_at: Option<SystemTime>,
@@ -65,6 +67,7 @@ impl WorkflowState {
         Self {
             workflow_id,
             workflow_name,
+            workflow_path: None,
             status: WorkflowStatus::Pending,
             created_at: SystemTime::now(),
             started_at: None,

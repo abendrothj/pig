@@ -21,22 +21,6 @@ proptest! {
     }
 }
 
-// Property: Modality::from_file_extension never panics
-proptest! {
-    #[test]
-    fn modality_from_extension_never_panics(ext in "\\PC{0,20}") {
-        let _ = Modality::from_file_extension(&ext);
-    }
-}
-
-// Property: Modality::from_mime_type never panics
-proptest! {
-    #[test]
-    fn modality_from_mime_never_panics(mime in "\\PC{0,50}") {
-        let _ = Modality::from_mime_type(&mime);
-    }
-}
-
 // Property: build_dag always produces nodes with correct IDs
 proptest! {
     #[test]
@@ -50,11 +34,7 @@ proptest! {
             input_from: None,
             depends_on: None,
             condition: None,
-            on_success: None,
-            on_failure: None,
             for_each: None,
-            input_modality: None,
-            output_modality: None,
         }).collect();
 
         let dag = build_dag(&steps).unwrap();
@@ -78,11 +58,7 @@ proptest! {
             input_from: if i > 0 { Some(format!("step{}", i)) } else { None },
             depends_on: None,
             condition: None,
-            on_success: None,
-            on_failure: None,
             for_each: None,
-            input_modality: None,
-            output_modality: None,
         }).collect();
 
         let dag = build_dag(&steps).unwrap();

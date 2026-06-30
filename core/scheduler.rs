@@ -1,5 +1,7 @@
 use crate::state_manager::WorkflowStateManager;
+use crate::workflow_exec::run_workflow_yaml;
 use crate::workflow_state::{WorkflowSchedule, WorkflowState, WorkflowStatus};
+use crate::workflow_types::StepLog;
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 
@@ -19,10 +21,12 @@ pub struct ScheduledWorkflow {
 impl WorkflowScheduler {
     pub fn new(state_dir: &str) -> std::io::Result<Self> {
         let state_manager = WorkflowStateManager::new(state_dir)?;
-        Ok(Self {
+        let mut scheduler = Self {
             state_manager,
             scheduled_workflows: HashMap::new(),
-        })
+        };
+        scheduler.reload_scheduled_workflows();
+        Ok(scheduler)
     }
 
     pub fn schedule_workflow(
@@ -33,8 +37,11 @@ impl WorkflowScheduler {
     ) -> Result<(), String> {
         let next_run = self.calculate_next_run(&schedule)?;
 
+        let mut schedule = schedule.clone();
+        schedule.next_run = Some(next_run);
+
         let scheduled = ScheduledWorkflow {
-            workflow_path,
+            workflow_path: workflow_path.clone(),
             schedule: schedule.clone(),
             last_run: None,
             next_run,
@@ -46,6 +53,7 @@ impl WorkflowScheduler {
         // Create a scheduled workflow state
         let mut state = WorkflowState::new(workflow_id, "Scheduled Workflow".to_string(), 0);
         state.status = WorkflowStatus::Scheduled;
+        state.workflow_path = Some(workflow_path);
         state.schedule = Some(schedule);
 
         self.state_manager
@@ -53,6 +61,41 @@ impl WorkflowScheduler {
             .map_err(|e| format!("Failed to save scheduled workflow state: {}", e))?;
 
         Ok(())
+    }
+
+    fn reload_scheduled_workflows(&mut self) {
+        let states: Vec<_> = self
+            .state_manager
+            .list_scheduled_workflows()
+            .into_iter()
+            .cloned()
+            .collect();
+
+        for state in states {
+            let Some(workflow_path) = state.workflow_path.clone() else {
+                continue;
+            };
+            let Some(schedule) = state.schedule.clone() else {
+                continue;
+            };
+            if !schedule.enabled {
+                continue;
+            }
+
+            let next_run = schedule.next_run.unwrap_or_else(|| {
+                self.calculate_next_run(&schedule)
+                    .unwrap_or(SystemTime::now())
+            });
+            self.scheduled_workflows.insert(
+                state.workflow_id,
+                ScheduledWorkflow {
+                    workflow_path,
+                    schedule,
+                    last_run: state.completed_at,
+                    next_run,
+                },
+            );
+        }
     }
 
     pub fn unschedule_workflow(&mut self, workflow_id: &str) -> Result<(), String> {
@@ -90,6 +133,7 @@ impl WorkflowScheduler {
             scheduled.last_run = Some(SystemTime::now());
             scheduled.next_run = next_run;
             scheduled.schedule.run_count += 1;
+            scheduled.schedule.next_run = Some(next_run);
 
             // Check if max runs reached
             if let Some(max_runs) = max_runs {
@@ -97,8 +141,42 @@ impl WorkflowScheduler {
                     scheduled.schedule.enabled = false;
                 }
             }
+
+            if let Ok(Some(mut state)) = self.state_manager.load_state(workflow_id) {
+                state.schedule = Some(scheduled.schedule.clone());
+                state.completed_at = scheduled.last_run;
+                self.state_manager
+                    .save_state(&state)
+                    .map_err(|e| format!("Failed to persist workflow run update: {}", e))?;
+            }
         }
         Ok(())
+    }
+
+    pub fn run_due_workflows(&mut self) -> Vec<(String, Result<Vec<StepLog>, String>)> {
+        let due = self.get_due_workflows();
+        let mut results = Vec::new();
+
+        for workflow_id in due {
+            let Some(workflow_path) = self
+                .scheduled_workflows
+                .get(&workflow_id)
+                .map(|scheduled| scheduled.workflow_path.clone())
+            else {
+                continue;
+            };
+            let result = run_workflow_yaml(&workflow_path);
+            let update_result = self.update_workflow_run(&workflow_id);
+            let combined = match (result, update_result) {
+                (Ok(logs), Ok(())) => Ok(logs),
+                (Err(run_err), Ok(())) => Err(run_err),
+                (Ok(_), Err(update_err)) => Err(update_err),
+                (Err(run_err), Err(update_err)) => Err(format!("{}; {}", run_err, update_err)),
+            };
+            results.push((workflow_id, combined));
+        }
+
+        results
     }
 
     pub fn list_scheduled_workflows(&self) -> Vec<(String, &ScheduledWorkflow)> {
@@ -375,5 +453,23 @@ mod tests {
         assert!(history.is_some());
         let state = history.unwrap();
         assert!(matches!(state.status, WorkflowStatus::Scheduled));
+    }
+
+    #[test]
+    fn test_scheduled_workflows_reload_from_disk() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        {
+            let mut scheduler = WorkflowScheduler::new(dir.path().to_str().unwrap()).unwrap();
+            let schedule = make_schedule("interval:30", true);
+            scheduler
+                .schedule_workflow("wf-reload".to_string(), "test.yaml".to_string(), schedule)
+                .unwrap();
+        }
+
+        let scheduler = WorkflowScheduler::new(dir.path().to_str().unwrap()).unwrap();
+        let listed = scheduler.list_scheduled_workflows();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].0, "wf-reload");
+        assert_eq!(listed[0].1.workflow_path, "test.yaml");
     }
 }

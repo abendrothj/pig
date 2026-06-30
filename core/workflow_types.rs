@@ -24,15 +24,7 @@ pub struct WorkflowStep {
     #[serde(default)]
     pub condition: Option<StepCondition>,
     #[serde(default)]
-    pub on_success: Option<Vec<String>>, // Step IDs to execute on success
-    #[serde(default)]
-    pub on_failure: Option<Vec<String>>, // Step IDs to execute on failure
-    #[serde(default)]
     pub for_each: Option<LoopConfig>, // Loop iteration support
-    #[serde(default)]
-    pub input_modality: Option<Modality>, // Input modality type
-    #[serde(default)]
-    pub output_modality: Option<Modality>, // Output modality type
 }
 
 /// Loop/iteration configuration for processing arrays
@@ -72,69 +64,6 @@ fn default_max_parallel() -> usize {
     4
 }
 
-/// Modality types for multimodal workflow support
-#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum Modality {
-    /// Plain text
-    Text,
-    /// Audio/speech data
-    Audio,
-    /// Image data
-    Image,
-    /// Video data
-    Video,
-    /// Structured data (JSON/YAML)
-    Structured,
-    /// Binary data
-    Binary,
-    /// Mixed/unknown modality
-    Mixed,
-}
-
-impl Modality {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Modality::Text => "text",
-            Modality::Audio => "audio",
-            Modality::Image => "image",
-            Modality::Video => "video",
-            Modality::Structured => "structured",
-            Modality::Binary => "binary",
-            Modality::Mixed => "mixed",
-        }
-    }
-
-    pub fn from_file_extension(ext: &str) -> Option<Modality> {
-        match ext.to_lowercase().as_str() {
-            "txt" | "json" | "yaml" | "yml" | "csv" => Some(Modality::Text),
-            "mp3" | "wav" | "ogg" | "flac" | "aac" => Some(Modality::Audio),
-            "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" => Some(Modality::Image),
-            "mp4" | "avi" | "mov" | "mkv" | "webm" => Some(Modality::Video),
-            _ => None,
-        }
-    }
-
-    pub fn from_mime_type(mime: &str) -> Option<Modality> {
-        let base = mime.split(';').next().unwrap_or(mime);
-        if base.starts_with("text/") {
-            Some(Modality::Text)
-        } else if base.starts_with("audio/") {
-            Some(Modality::Audio)
-        } else if base.starts_with("image/") {
-            Some(Modality::Image)
-        } else if base.starts_with("video/") {
-            Some(Modality::Video)
-        } else if base.contains("json") || base.contains("yaml") {
-            Some(Modality::Structured)
-        } else if base.starts_with("application/octet-stream") {
-            Some(Modality::Binary)
-        } else {
-            None
-        }
-    }
-}
-
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct StepCondition {
     pub condition_type: ConditionType,
@@ -159,8 +88,6 @@ pub enum ConditionOperator {
     NotEquals,
     Contains,
     NotContains,
-    GreaterThan,
-    LessThan,
 }
 
 #[derive(Debug)]

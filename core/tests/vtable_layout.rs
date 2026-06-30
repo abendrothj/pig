@@ -3,6 +3,13 @@ use std::mem;
 
 #[test]
 fn test_vtable_layout() {
+    assert_eq!(LAO_PLUGIN_ABI_VERSION, 1);
+    assert_eq!(memoffset::offset_of!(PluginVTable, version), 0);
+    assert!(
+        memoffset::offset_of!(PluginVTable, name)
+            < memoffset::offset_of!(PluginVTable, get_capabilities)
+    );
+
     println!(
         "PluginVTable size: {} bytes",
         mem::size_of::<PluginVTable>()
@@ -78,7 +85,7 @@ fn test_vtable_layout() {
     }
 
     let dummy_vtable = PluginVTable {
-        version: 1,
+        version: LAO_PLUGIN_ABI_VERSION,
         name: dummy_name,
         run: dummy_run,
         free_output: dummy_free_output,
