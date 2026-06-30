@@ -26,6 +26,24 @@ lao <COMMAND> [OPTIONS]
   Manage persisted workflow schedule and execution state metadata. `run-due`
   manually executes due enabled schedules; LAO does not run a background daemon.
 
+### Scheduling in production
+
+LAO intentionally has no long-running scheduler daemon. The supported production pattern
+is to drive `run-due` from the system scheduler:
+
+```cron
+# Check for due workflows every 5 minutes (Linux/macOS cron)
+*/5 * * * * cd /opt/lao && /usr/local/bin/lao-cli run-due >> /var/log/lao/run-due.log 2>&1
+```
+
+(On Windows, use Task Scheduler to invoke `lao-cli run-due` on the same interval.)
+
+`run-due` acquires an advisory lock file (`.run-due.lock`) in the state directory before
+executing. If a previous invocation is still running when the next cron tick fires, the
+new invocation exits non-zero with `another run-due invocation is in progress` instead of
+double-running schedules. Stale locks (older than one hour, e.g. after a crash) are
+reclaimed automatically.
+
 ## Logging
 
 Set `RUST_LOG` to control CLI/core diagnostics:
