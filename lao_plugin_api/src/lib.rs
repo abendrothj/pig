@@ -1,5 +1,7 @@
 use std::ffi::{c_char, CStr};
 
+pub const LAO_PLUGIN_ABI_VERSION: u32 = 1;
+
 #[repr(C)]
 pub struct PluginInput {
     pub text: *mut c_char,
