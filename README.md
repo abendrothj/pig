@@ -80,7 +80,8 @@ parallel levels, caching) and [docs/cli.md](docs/cli.md) for all commands.
 | `MarkdownReportPlugin` | Formats text into a Markdown report, optionally writing it to disk |
 
 Writing your own plugin is a matter of implementing the C vtable — see
-`lao_plugin_api` and the bundled plugins for examples.
+`lao_plugin_api`, [docs/plugin-api.md](docs/plugin-api.md), and the bundled
+plugins for examples.
 
 ## Configuration
 
@@ -88,17 +89,33 @@ Writing your own plugin is a matter of implementing the C vtable — see
 |---|---|
 | `LAO_PLUGINS_DIR` | Directory the registry scans for plugins (default: `plugins/`) |
 | `LAO_CACHE_DIR` | Directory for cached step outputs (default: `cache/`) |
+| `RUST_LOG` | Logging filter for CLI/core diagnostics (default: `warn`) |
 | `WHISPER_CPP_PATH` | Path to the `whisper.cpp` build used by `WhisperPlugin` |
-| `LAO_ALLOW_SHELL` | Set to `1` to allow `ShellCommandPlugin` to execute commands |
+| `LAO_ALLOW_SHELL` | Compatibility escape hatch for trusted shell workflows |
+
+Production trust policy is configured through `lao.toml`:
+
+```toml
+[trust]
+allow_filesystem_read = false
+allow_filesystem_write = false
+allow_filesystem_enumerate = false
+allow_shell = false
+allow_network = false
+allow_subprocess = false
+allow_plugins = []
+```
 
 ## Notes & limitations
 
-- **Plugins run in-process with full host privileges.** They are loaded via
-  `dlopen` with no sandbox — only load plugins you trust.
+- **Plugins run in-process with full host privileges.** The core trust policy
+  denies dangerous capabilities by default, but trusted allowed plugins still run
+  with host process privileges.
 - **Step success is determined by convention:** a step is considered failed if its
   output is empty or begins with `error:`. The ABI has no separate status channel.
-- **`schedule`/`unschedule`/`list-scheduled` persist schedule metadata only.** There
-  is no background daemon; runs are triggered manually with `run`.
+- **Scheduling is persistent and manually triggered.** `schedule`,
+  `unschedule`, `list-scheduled`, and `run-due` operate on persisted state. There
+  is no background daemon.
 
 ## License
 

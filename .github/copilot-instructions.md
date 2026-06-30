@@ -9,7 +9,7 @@ bundled plugins, docs, scripts, and workflow examples.
 - `core/`: DAG engine, workflow execution, scheduling state, caching, prompt validation, and plugin loading.
 - `cli/`: `lao-cli` command-line interface for running, validating, scaffolding, and inspecting workflows.
 - `lao_plugin_api/`: Stable C ABI shared by the host and plugin crates.
-- `plugins/`: Bundled plugins: `EchoPlugin`, `WhisperPlugin`, `SummarizerPlugin`, and `PromptDispatcherPlugin`.
+- `plugins/`: Bundled plugins including `EchoPlugin`, `WhisperPlugin`, `SummarizerPlugin`, `PromptDispatcherPlugin`, `FileReadPlugin`, `FolderMapPlugin`, `JsonExtractPlugin`, `RegexExtractPlugin`, `ShellCommandPlugin`, and `MarkdownReportPlugin`.
 - `workflows/`: YAML workflow examples.
 - `docs/`: Architecture, CLI, and workflow documentation.
 
@@ -47,3 +47,10 @@ subdirectory's `target/release/`. Each plugin should export the expected
 
 Use `lao_plugin_api` and `plugins/EchoPlugin` as the reference implementation
 when adding new plugins.
+
+## Production Rules
+
+- Keep workflow schema fields executable or reject them explicitly.
+- Route plugin execution through the core plugin host, not raw vtable calls.
+- Respect `TrustPolicy`; dangerous filesystem, shell, network, and subprocess plugins must be explicitly allowed.
+- `lao_plugin_api` is an external compatibility contract. ABI layout or ownership changes require documented versioning impact.
