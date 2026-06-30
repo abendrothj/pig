@@ -4,7 +4,3 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-  - package-ecosystem: "npm"
-    directory: "/ui/lao-ui/"
-    schedule:
-      interval: "weekly" 

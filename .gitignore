@@ -25,21 +25,6 @@ plugins/*.dll
 # Vendored C/C++ sources
 /whisper.cpp/
 
-# Node/Svelte
-/ui/lao-ui/node_modules/
-/ui/lao-ui/.svelte-kit/
-/ui/lao-ui/build/
-/ui/lao-ui/package/
-
-# Tauri
-/ui/lao-ui/src-tauri/target/
-/ui/lao-ui/src-tauri/Cargo.lock
-
-# Vite/SvelteKit
-/ui/lao-ui/vite.config.js.timestamp-*
-/ui/lao-ui/vite.config.ts.timestamp-*
-ui/lao-ui/gen/
-
 # Environment
 .env
 .env.*
