@@ -72,6 +72,12 @@ parallel levels, caching) and [docs/cli.md](docs/cli.md) for all commands.
 | `WhisperPlugin` | Transcribes audio by shelling out to a local `whisper.cpp` build |
 | `SummarizerPlugin` | Summarizes text via a local HTTP inference endpoint |
 | `PromptDispatcherPlugin` | Generates a workflow YAML from a natural-language prompt |
+| `FileReadPlugin` | Reads a file from disk and returns its contents |
+| `FolderMapPlugin` | Recursively lists files under a directory |
+| `JsonExtractPlugin` | Extracts a value from JSON via a `$.a.b[0]` selector |
+| `RegexExtractPlugin` | Returns regex matches from text (first input line is the pattern) |
+| `ShellCommandPlugin` | Runs a trusted shell command (gated by `LAO_ALLOW_SHELL=1`) |
+| `MarkdownReportPlugin` | Formats text into a Markdown report, optionally writing it to disk |
 
 Writing your own plugin is a matter of implementing the C vtable — see
 `lao_plugin_api` and the bundled plugins for examples.
@@ -83,6 +89,7 @@ Writing your own plugin is a matter of implementing the C vtable — see
 | `LAO_PLUGINS_DIR` | Directory the registry scans for plugins (default: `plugins/`) |
 | `LAO_CACHE_DIR` | Directory for cached step outputs (default: `cache/`) |
 | `WHISPER_CPP_PATH` | Path to the `whisper.cpp` build used by `WhisperPlugin` |
+| `LAO_ALLOW_SHELL` | Set to `1` to allow `ShellCommandPlugin` to execute commands |
 
 ## Notes & limitations
 
