@@ -3,7 +3,7 @@
 //! Serial vs parallel orchestration share the same step lifecycle; parallel level
 //! scheduling lives in `workflow_parallel` until a dedicated serial backend is needed.
 
-use crate::workflow_parallel::run_workflow_yaml_parallel_with_callback;
+use crate::workflow_parallel::run_workflow_with_options;
 use crate::workflow_types::{StepEvent, StepLog};
 
 /// Controls how workflows are executed and persisted.
@@ -49,13 +49,13 @@ impl WorkflowExecutor {
     where
         F: FnMut(StepEvent) + Send,
     {
-        if !self.options.parallel {
-            tracing::warn!("Serial execution is not implemented; using parallel runner");
-        }
-        let _ = &self.options.state_dir;
-        let _ = self.options.record_state;
-        // State recording is wired in the parallel runner (shared step kernel).
-        run_workflow_yaml_parallel_with_callback(path, on_event)
+        run_workflow_with_options(
+            path,
+            self.options.parallel,
+            self.options.record_state,
+            &self.options.state_dir,
+            on_event,
+        )
     }
 }
 

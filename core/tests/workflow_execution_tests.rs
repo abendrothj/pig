@@ -3,8 +3,8 @@
 use lao_orchestrator_core::cross_platform::PathUtils;
 use lao_orchestrator_core::plugins::PluginRegistry;
 use lao_orchestrator_core::{
-    run_workflow_yaml, run_workflow_yaml_parallel_with_callback, run_workflow_yaml_with_callback,
-    StepEvent, Workflow, WorkflowStep,
+    run_workflow_with_options, run_workflow_yaml, run_workflow_yaml_parallel_with_callback,
+    run_workflow_yaml_with_callback, StepEvent, Workflow, WorkflowStep,
 };
 use serial_test::serial;
 use std::fs;
@@ -201,6 +201,59 @@ fn test_workflow_execution_parallel() {
         .filter(|e| e.status == "success" || e.status == "cache")
         .collect();
     assert_eq!(completed_steps.len(), 3, "All steps should complete");
+
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+#[serial]
+fn test_serial_execution_matches_parallel_outputs() {
+    if !check_plugins_available(&["EchoPlugin"]) {
+        return;
+    }
+
+    // a -> b (b consumes a's output) so ordering is observable.
+    let workflow = Workflow {
+        workflow: "Serial Chain".to_string(),
+        steps: vec![
+            WorkflowStep {
+                run: "EchoPlugin".to_string(),
+                params: serde_yaml::from_str("input: 'first'").unwrap(),
+                retries: None,
+                retry_delay: None,
+                cache_key: None,
+                input_from: None,
+                depends_on: None,
+                condition: None,
+                for_each: None,
+            },
+            WorkflowStep {
+                run: "EchoPlugin".to_string(),
+                params: serde_yaml::from_str("input: 'second'").unwrap(),
+                retries: None,
+                retry_delay: None,
+                cache_key: None,
+                input_from: Some("step1".to_string()),
+                depends_on: Some(vec!["step1".to_string()]),
+                condition: None,
+                for_each: None,
+            },
+        ],
+    };
+    let path = "temp_serial_execution.yaml";
+    fs::write(path, serde_yaml::to_string(&workflow).unwrap()).unwrap();
+
+    // Serial run (no state recording, no concurrency) through the shared StepExecutor.
+    let logs = run_workflow_with_options(path, false, false, "workflow_states", |_e: StepEvent| {})
+        .expect("Serial workflow should execute");
+
+    assert_eq!(logs.len(), 2, "Should have 2 execution logs");
+    // The dependent step echoes the first step's output ("first").
+    let second = logs
+        .iter()
+        .find(|l| l.step_id == "step2")
+        .expect("step2 should be present");
+    assert_eq!(second.output.as_deref(), Some("first"));
 
     fs::remove_file(path).unwrap();
 }
