@@ -270,21 +270,19 @@ impl TrustPolicy {
         Ok(())
     }
 
-    /// Reconcile plugin.yaml manifest capabilities with runtime policy.
+    /// Reconcile a plugin's declared manifest capabilities with the runtime policy.
+    ///
+    /// This is the manifest-driven enforcement path: any plugin (including future or
+    /// third-party ones) is gated by the capability classes it declares, not by a
+    /// hardcoded plugin-name list. Unknown capability names are treated as safe.
     pub fn check_manifest_capabilities(
         &self,
         plugin_name: &str,
         capabilities: &[lao_plugin_api::PluginCapability],
     ) -> Result<(), String> {
         for cap in capabilities {
-            let class = match cap.name.as_str() {
-                "filesystem_read" | "file_read" => CapabilityClass::FilesystemRead,
-                "filesystem_write" | "file_write" => CapabilityClass::FilesystemWrite,
-                "filesystem_enumerate" | "directory_list" => CapabilityClass::FilesystemEnumerate,
-                "shell" | "shell_execute" => CapabilityClass::Shell,
-                "network" | "http" => CapabilityClass::Network,
-                "subprocess" => CapabilityClass::Subprocess,
-                _ => continue,
+            let Some(class) = capability_class_for_manifest(&cap.name) else {
+                continue;
             };
             self.require_capability(plugin_name, class).map_err(|_| {
                 format!(
@@ -303,6 +301,29 @@ impl TrustPolicy {
         class: CapabilityClass,
     ) -> Result<PathBuf, String> {
         self.validate_filesystem_path(path, class)
+    }
+}
+
+/// Map a declared manifest capability name to a trust capability class.
+/// Accepts both the bundled plugins' functional names and canonical class names so
+/// external plugins can declare either form.
+fn capability_class_for_manifest(capability_name: &str) -> Option<CapabilityClass> {
+    match capability_name {
+        "read-file" | "file-read" | "file_read" | "filesystem_read" => {
+            Some(CapabilityClass::FilesystemRead)
+        }
+        "write-file" | "file-write" | "file_write" | "filesystem_write" | "markdown-report" => {
+            Some(CapabilityClass::FilesystemWrite)
+        }
+        "map-folder"
+        | "list-folder"
+        | "directory-list"
+        | "directory_list"
+        | "filesystem_enumerate" => Some(CapabilityClass::FilesystemEnumerate),
+        "run-shell" | "shell" | "shell-command" | "shell_execute" => Some(CapabilityClass::Shell),
+        "summarize" | "prompt-dispatch" | "network" | "http" => Some(CapabilityClass::Network),
+        "speech-to-text" | "subprocess" => Some(CapabilityClass::Subprocess),
+        _ => None,
     }
 }
 
@@ -463,6 +484,31 @@ mod tests {
         trusted.allow_shell = true;
         assert!(trusted
             .check_manifest_capabilities("ShellCommandPlugin", &caps)
+            .is_ok());
+    }
+
+    #[test]
+    fn manifest_uses_declared_functional_names() {
+        use lao_plugin_api::{PluginCapability, PluginInputType, PluginOutputType};
+        // The bundled FileReadPlugin declares the functional name "read-file"; trust
+        // enforcement must recognize it without a hardcoded plugin-name allowlist.
+        let caps = vec![PluginCapability {
+            name: "read-file".to_string(),
+            description: String::new(),
+            input_type: PluginInputType::Any,
+            output_type: PluginOutputType::Text,
+        }];
+
+        let denied = TrustPolicy::default();
+        assert!(denied
+            .check_manifest_capabilities("FileReadPlugin", &caps)
+            .is_err());
+
+        let mut trusted = TrustPolicy::default();
+        trusted.allow_filesystem_read = true;
+        trusted.filesystem_roots = vec![std::path::PathBuf::from("/tmp")];
+        assert!(trusted
+            .check_manifest_capabilities("FileReadPlugin", &caps)
             .is_ok());
     }
 
