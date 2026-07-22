@@ -70,6 +70,7 @@ async fn spawn_test_server(
         started_at: Instant::now(),
         auth_token,
         backend_name: "fake".to_string(),
+        hardware_cache: std::sync::Mutex::new(None),
     });
 
     let app = lao_worker::server::router(state.clone());
@@ -392,6 +393,72 @@ async fn auth_enabled_rejects_missing_or_wrong_token() {
         .await
         .unwrap();
     assert_eq!(authenticated.status(), 200);
+}
+
+#[tokio::test]
+async fn metrics_endpoint_requires_auth_like_every_other_endpoint() {
+    let (base, _state) = spawn_test_server(2, 8, None, Some("secret-token".to_string())).await;
+    let client = reqwest::Client::new();
+
+    let unauthenticated = client
+        .get(format!("{}/v1/metrics", base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauthenticated.status(), 401);
+
+    let authenticated = client
+        .get(format!("{}/v1/metrics", base))
+        .bearer_auth("secret-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(authenticated.status(), 200);
+}
+
+#[tokio::test]
+async fn metrics_endpoint_before_any_model_load_reports_not_loaded_not_zero() {
+    let (base, _state) = spawn_test_server(2, 8, None, None).await;
+    let client = reqwest::Client::new();
+    let body: serde_json::Value = client
+        .get(format!("{}/v1/metrics", base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(body["schema_version"], 1);
+    assert_eq!(body["worker"]["lifecycle_state"], "idle");
+    assert_eq!(body["queue"]["depth"], 0);
+    assert_eq!(body["jobs"]["active"], 0);
+    assert_eq!(body["jobs"]["completed"], 0);
+    assert!(body["model"]["loaded_model_id"].is_null());
+    assert_eq!(body["model"]["load_state"], "not_loaded");
+}
+
+/// The `FakeBackend` test harness never has a real GPU, so `AppState.hardware` here
+/// naturally has no accelerator - this is already the default case, not a special
+/// stub, and it's exactly the scenario the endpoint must degrade gracefully under.
+#[tokio::test]
+async fn metrics_endpoint_reports_null_not_zero_when_hardware_telemetry_is_unavailable() {
+    let (base, _state) = spawn_test_server(2, 8, None, None).await;
+    let client = reqwest::Client::new();
+    let body: serde_json::Value = client
+        .get(format!("{}/v1/metrics", base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    assert!(body["accelerator"]["kind"].is_null());
+    assert!(body["accelerator"]["name"].is_null());
+    assert!(body["accelerator"]["utilization_percent"].is_null());
+    assert!(body["throughput"]["last_prompt_tokens_per_second"].is_null());
+    assert!(body["throughput"]["last_generation_tokens_per_second"].is_null());
 }
 
 #[tokio::test]

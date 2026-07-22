@@ -64,6 +64,7 @@ async fn spawn_worker(id: &str) -> String {
         started_at: Instant::now(),
         auth_token: None,
         backend_name: "fake".to_string(),
+        hardware_cache: std::sync::Mutex::new(None),
     });
     let app = lao_worker::server::router(state);
     let tokio_listener = tokio::net::TcpListener::from_std(std_listener).unwrap();

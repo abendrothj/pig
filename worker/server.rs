@@ -19,11 +19,15 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures::StreamExt;
-use lao_orchestrator_core::model::{JobId, ModelId, ModelRequest, ModelSelector};
+use lao_orchestrator_core::model::{
+    AcceleratorMetrics, JobId, ModelId, ModelLoadState, ModelMetrics, ModelRequest, ModelSelector,
+    QueueMetrics, SystemMetrics, ThroughputMetrics, WorkerId, WorkerIdentityMetrics,
+    WorkerLifecycleState, WorkerMetricsSnapshot, METRICS_SCHEMA_VERSION,
+};
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
 
@@ -60,6 +64,7 @@ pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/v1/health", get(health))
         .route("/v1/capabilities", get(capabilities))
+        .route("/v1/metrics", get(metrics))
         .route("/v1/models", get(list_models))
         .route("/v1/jobs", get(list_jobs))
         .route("/v1/jobs/:job_id", get(get_job))
@@ -147,6 +152,121 @@ async fn capabilities(State(state): State<Arc<AppState>>) -> Json<CapabilitiesRe
             .into_iter()
             .map(|r| r.entry.id.0)
             .collect(),
+    })
+}
+
+/// TTL for the re-probed (live) hardware reading `/v1/metrics` uses for
+/// system/accelerator utilization and VRAM. `discover()` shells out to
+/// `nvidia-smi`/reads `/proc`, so this bounds how often that happens under request
+/// load rather than doing it on every single request.
+const HARDWARE_CACHE_TTL: Duration = Duration::from_secs(2);
+
+/// Refreshes `state.hardware_cache` only when missing or stale, via
+/// `spawn_blocking` since `discover()` does blocking I/O (process spawn, file
+/// reads) and nothing before this endpoint has ever called it from inside the
+/// async runtime.
+async fn live_hardware(state: &AppState) -> crate::hardware::HardwareInfo {
+    if let Some((fetched_at, info)) = &*state.hardware_cache.lock().unwrap() {
+        if fetched_at.elapsed() < HARDWARE_CACHE_TTL {
+            return info.clone();
+        }
+    }
+    let fresh = tokio::task::spawn_blocking(crate::hardware::discover)
+        .await
+        .unwrap_or_default();
+    *state.hardware_cache.lock().unwrap() = Some((Instant::now(), fresh.clone()));
+    fresh
+}
+
+async fn metrics(State(state): State<Arc<AppState>>) -> Json<WorkerMetricsSnapshot> {
+    let job_metrics = state.runtime.job_metrics().await;
+    let models = state
+        .runtime
+        .backend()
+        .list_models()
+        .await
+        .unwrap_or_default();
+    let loaded_model_id = models.iter().find(|m| m.loaded).map(|m| m.model_id.clone());
+
+    let lifecycle_state = if job_metrics.currently_loading {
+        WorkerLifecycleState::Loading
+    } else if job_metrics.counts.active > 0 {
+        WorkerLifecycleState::Running
+    } else {
+        WorkerLifecycleState::Idle
+    };
+    let load_state = if job_metrics.currently_loading {
+        ModelLoadState::Loading
+    } else if loaded_model_id.is_some() {
+        ModelLoadState::Loaded
+    } else {
+        ModelLoadState::NotLoaded
+    };
+
+    // `state.hardware` is the one-time startup snapshot - the same source
+    // `/v1/capabilities` reports from, and the authority on *whether* an
+    // accelerator exists at all. `live` is a fresh (TTL-cached) re-probe, trusted
+    // only for numbers that legitimately change over time (available memory/VRAM,
+    // utilization) - never for identity. Without this split, a re-probe on a
+    // machine whose *real* hardware differs from what this worker was configured/
+    // tested with (e.g. a dev machine's own GPU) would contradict `/v1/capabilities`
+    // and report accelerator data for a device this worker isn't actually using.
+    let live = live_hardware(&state).await;
+    let accelerator_present = state.hardware.accelerator.is_some();
+
+    Json(WorkerMetricsSnapshot {
+        schema_version: METRICS_SCHEMA_VERSION,
+        timestamp_unix_ms: crate::job::now_ms(),
+        worker: WorkerIdentityMetrics {
+            worker_id: WorkerId::from(state.config.id.clone()),
+            uptime_seconds: state.started_at.elapsed().as_secs(),
+            lifecycle_state,
+        },
+        queue: QueueMetrics {
+            capacity: state.config.max_queued_jobs,
+            depth: state.runtime.queue_depth(),
+        },
+        jobs: job_metrics.counts,
+        model: ModelMetrics {
+            loaded_model_id,
+            load_state,
+            last_load_duration_ms: job_metrics.last_load_duration_ms,
+        },
+        system: SystemMetrics {
+            memory_used_bytes: match (
+                state.hardware.total_memory_bytes,
+                live.available_memory_bytes,
+            ) {
+                (Some(total), Some(available)) => Some(total.saturating_sub(available)),
+                _ => None,
+            },
+            memory_total_bytes: state.hardware.total_memory_bytes,
+            cpu_utilization_percent: crate::hardware::cpu_utilization_percent(
+                state.hardware.logical_cpus,
+            ),
+        },
+        accelerator: AcceleratorMetrics {
+            kind: state.hardware.accelerator,
+            name: state.hardware.accelerator_name.clone(),
+            utilization_percent: accelerator_present
+                .then_some(live.accelerator_utilization_percent)
+                .flatten(),
+            memory_used_bytes: accelerator_present
+                .then(
+                    || match (state.hardware.total_vram_bytes, live.available_vram_bytes) {
+                        (Some(total), Some(available)) => Some(total.saturating_sub(available)),
+                        _ => None,
+                    },
+                )
+                .flatten(),
+            memory_total_bytes: accelerator_present
+                .then_some(state.hardware.total_vram_bytes)
+                .flatten(),
+        },
+        throughput: ThroughputMetrics {
+            last_prompt_tokens_per_second: job_metrics.last_prompt_tokens_per_second,
+            last_generation_tokens_per_second: job_metrics.last_generation_tokens_per_second,
+        },
     })
 }
 

@@ -44,7 +44,7 @@ pub struct JobRecord {
     pub response: Option<ModelResponse>,
 }
 
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -66,6 +66,18 @@ pub struct ResolvedGeneration {
 #[derive(Debug)]
 pub enum QueueError {
     QueueFull,
+}
+
+/// The parts of `WorkerMetricsSnapshot` derivable purely from the job map in one
+/// pass - `worker/server.rs`'s metrics handler combines this with the backend's own
+/// "what's loaded" answer and live hardware readings for the full schema.
+#[derive(Debug, Clone, Default)]
+pub struct JobMetricsSnapshot {
+    pub counts: lao_orchestrator_core::model::JobMetrics,
+    pub currently_loading: bool,
+    pub last_load_duration_ms: Option<u64>,
+    pub last_prompt_tokens_per_second: Option<f64>,
+    pub last_generation_tokens_per_second: Option<f64>,
 }
 
 struct RunningJob {
@@ -146,6 +158,62 @@ impl WorkerRuntime {
             .values()
             .filter(|j| matches!(j.status, JobStatus::Loading | JobStatus::Running))
             .count()
+    }
+
+    /// One pass over the job map for every metric derivable from it, rather than
+    /// several separate locks/iterations - this is the single place `/v1/metrics`
+    /// reads from, so there's exactly one definition of "completed" etc., not a
+    /// second counter that could drift from what `jobs` actually contains.
+    pub async fn job_metrics(&self) -> JobMetricsSnapshot {
+        let jobs = self.jobs.read().await;
+        let mut counts = lao_orchestrator_core::model::JobMetrics::default();
+        let mut currently_loading = false;
+        let mut latest_success_completed_at = 0u64;
+        let mut last_prompt_tokens_per_second = None;
+        let mut last_generation_tokens_per_second = None;
+        let mut latest_load_completed_at = 0u64;
+        let mut last_load_duration_ms = None;
+
+        for record in jobs.values() {
+            match record.status {
+                JobStatus::Loading | JobStatus::Running => counts.active += 1,
+                JobStatus::Succeeded => counts.completed += 1,
+                JobStatus::Failed | JobStatus::TimedOut => counts.failed += 1,
+                JobStatus::Cancelled => counts.cancelled += 1,
+                JobStatus::Queued => {}
+            }
+            if record.status == JobStatus::Loading {
+                currently_loading = true;
+            }
+
+            let Some(response) = &record.response else {
+                continue;
+            };
+            counts.cumulative_tokens_processed +=
+                (response.execution.prompt_tokens + response.execution.generated_tokens) as u64;
+
+            let Some(completed_at) = record.completed_at_ms else {
+                continue;
+            };
+            if response.is_success() && completed_at >= latest_success_completed_at {
+                latest_success_completed_at = completed_at;
+                last_prompt_tokens_per_second = response.execution.prompt_tokens_per_second;
+                last_generation_tokens_per_second = response.execution.generation_tokens_per_second;
+            }
+            if !response.execution.model_already_loaded && completed_at >= latest_load_completed_at
+            {
+                latest_load_completed_at = completed_at;
+                last_load_duration_ms = Some(response.execution.model_load_ms);
+            }
+        }
+
+        JobMetricsSnapshot {
+            counts,
+            currently_loading,
+            last_load_duration_ms,
+            last_prompt_tokens_per_second,
+            last_generation_tokens_per_second,
+        }
     }
 
     /// Submit a generation request. Returns the job id and a stream of token events
@@ -953,5 +1021,120 @@ mod tests {
     async fn unknown_job_id_cancel_returns_false() {
         let rt = runtime(1, 4);
         assert!(!rt.cancel(&JobId::generate()).await);
+    }
+
+    #[tokio::test]
+    async fn job_metrics_active_count_reflects_a_running_job() {
+        let backend = Arc::new(crate::backend::fake::FakeBackend::with_token_delay(
+            Duration::from_millis(200),
+        ));
+        let rt = WorkerRuntime::new(
+            "w".to_string(),
+            "h".to_string(),
+            backend,
+            "fake".to_string(),
+            1,
+            4,
+            Duration::from_secs(5),
+        );
+        let before = rt.job_metrics().await;
+        assert_eq!(before.counts.active, 0);
+
+        let mut req = request("one two three");
+        req.parameters.max_tokens = Some(20);
+        rt.submit(req, resolved("m1"), None).await.unwrap();
+        wait_for_active_jobs(&rt, 1).await;
+
+        let during = rt.job_metrics().await;
+        assert_eq!(during.counts.active, 1);
+        assert_eq!(during.counts.completed, 0);
+    }
+
+    #[tokio::test]
+    async fn job_metrics_counts_completed_failed_and_cancelled_separately() {
+        let backend = Arc::new(crate::backend::fake::FakeBackend::with_token_delay(
+            Duration::from_millis(200),
+        ));
+        let rt = WorkerRuntime::new(
+            "w".to_string(),
+            "h".to_string(),
+            backend,
+            "fake".to_string(),
+            4, // enough concurrency that these three don't queue behind each other
+            4,
+            Duration::from_secs(5),
+        );
+
+        let (ok_id, _e1) = rt
+            .submit(request("one two three"), resolved("m1"), None)
+            .await
+            .unwrap();
+        wait_for_terminal(&rt, &ok_id).await;
+
+        let (fail_id, _e2) = rt
+            .submit(request("hi"), resolved("fail-to-generate"), None)
+            .await
+            .unwrap();
+        wait_for_terminal(&rt, &fail_id).await;
+
+        let mut cancel_req = request("one two three four five");
+        cancel_req.parameters.max_tokens = Some(50);
+        let (cancel_id, _e3) = rt.submit(cancel_req, resolved("m1"), None).await.unwrap();
+        wait_for_active_jobs(&rt, 1).await;
+        assert!(rt.cancel(&cancel_id).await);
+        wait_for_terminal(&rt, &cancel_id).await;
+
+        let metrics = rt.job_metrics().await;
+        assert_eq!(metrics.counts.active, 0);
+        assert_eq!(metrics.counts.completed, 1, "exactly the successful job");
+        assert_eq!(metrics.counts.failed, 1, "exactly the fail-to-generate job");
+        assert_eq!(metrics.counts.cancelled, 1, "exactly the cancelled job");
+    }
+
+    #[tokio::test]
+    async fn job_metrics_throughput_does_not_regress_after_a_later_failure() {
+        let backend = Arc::new(crate::backend::fake::FakeBackend::with_token_delay(
+            Duration::from_millis(20),
+        ));
+        let rt = WorkerRuntime::new(
+            "w".to_string(),
+            "h".to_string(),
+            backend,
+            "fake".to_string(),
+            1,
+            4,
+            Duration::from_secs(5),
+        );
+
+        let (ok_id, _e1) = rt
+            .submit(request("one two three"), resolved("m1"), None)
+            .await
+            .unwrap();
+        wait_for_terminal(&rt, &ok_id).await;
+
+        let after_success = rt.job_metrics().await;
+        assert!(after_success.last_prompt_tokens_per_second.is_some());
+        assert!(after_success.last_generation_tokens_per_second.is_some());
+        assert!(
+            after_success.last_load_duration_ms.is_some(),
+            "the first job for a model incurs a real load (FakeBackend sleeps 5ms), so this must be Some"
+        );
+
+        let (fail_id, _e2) = rt
+            .submit(request("hi"), resolved("fail-to-generate"), None)
+            .await
+            .unwrap();
+        wait_for_terminal(&rt, &fail_id).await;
+
+        let after_failure = rt.job_metrics().await;
+        assert_eq!(
+            after_failure.last_prompt_tokens_per_second,
+            after_success.last_prompt_tokens_per_second,
+            "a later failed job must not blank out the last real throughput reading"
+        );
+        assert_eq!(
+            after_failure.last_generation_tokens_per_second,
+            after_success.last_generation_tokens_per_second,
+        );
     }
 }

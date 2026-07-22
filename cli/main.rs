@@ -217,6 +217,13 @@ enum WorkersAction {
         #[arg(long)]
         json: bool,
     },
+    /// Show telemetry for one worker, or an aggregate across all configured workers
+    /// if no worker id is given
+    Metrics {
+        worker_id: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1012,6 +1019,9 @@ fn main() {
                 model_commands::workers_inspect(worker_id, json)
             }
             WorkersAction::Health { json } => model_commands::workers_health(json),
+            WorkersAction::Metrics { worker_id, json } => {
+                model_commands::workers_metrics(worker_id, json)
+            }
         },
         Commands::Models { action } => match action {
             ModelsAction::List { json } => model_commands::models_list(json),

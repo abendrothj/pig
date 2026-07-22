@@ -20,6 +20,7 @@ pub struct HardwareInfo {
     pub accelerator_name: Option<String>,
     pub total_vram_bytes: Option<u64>,
     pub available_vram_bytes: Option<u64>,
+    pub accelerator_utilization_percent: Option<f32>,
     pub unified_memory: bool,
     pub cuda_available: bool,
     pub metal_available: bool,
@@ -132,7 +133,7 @@ fn discover_linux(info: &mut HardwareInfo) {
 fn discover_nvidia(info: &mut HardwareInfo) {
     let output = Command::new("nvidia-smi")
         .args([
-            "--query-gpu=name,memory.total,memory.free",
+            "--query-gpu=name,memory.total,memory.free,utilization.gpu",
             "--format=csv,noheader,nounits",
         ])
         .output();
@@ -156,6 +157,27 @@ fn discover_nvidia(info: &mut HardwareInfo) {
     info.accelerator_name = Some(parts[0].to_string());
     info.total_vram_bytes = parts[1].parse::<u64>().ok().map(|mib| mib * 1024 * 1024);
     info.available_vram_bytes = parts[2].parse::<u64>().ok().map(|mib| mib * 1024 * 1024);
+    info.accelerator_utilization_percent = parts.get(3).and_then(|s| s.parse::<f32>().ok());
+}
+
+/// A coarse, cheap-to-read proxy for CPU utilization: the 1-minute load average
+/// (kernel-maintained state, one file read, no delta-sampling) divided by logical
+/// CPU count. This is not the same thing as instantaneous CPU% - load average
+/// includes processes waiting on I/O, not just CPU contention - but it's honest,
+/// real state rather than a fabricated number, and avoids needing a background
+/// sampling task for a first pass. Clamped to `[0, 100]` since load average can
+/// exceed the logical CPU count under contention.
+#[cfg(target_os = "linux")]
+pub fn cpu_utilization_percent(logical_cpus: Option<u32>) -> Option<f32> {
+    let cpus = logical_cpus.filter(|&n| n > 0)? as f32;
+    let loadavg = std::fs::read_to_string("/proc/loadavg").ok()?;
+    let one_minute: f32 = loadavg.split_whitespace().next()?.parse().ok()?;
+    Some((one_minute / cpus * 100.0).clamp(0.0, 100.0))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn cpu_utilization_percent(_logical_cpus: Option<u32>) -> Option<f32> {
+    None
 }
 
 #[cfg(test)]
@@ -180,5 +202,18 @@ mod tests {
         // (cuda_available becomes true) - either way, no panic, which is the property
         // under test.
         let _ = info.cuda_available;
+    }
+
+    #[test]
+    fn cpu_utilization_percent_never_panics_and_stays_in_range() {
+        if let Some(pct) = cpu_utilization_percent(Some(8)) {
+            assert!((0.0..=100.0).contains(&pct));
+        }
+    }
+
+    #[test]
+    fn cpu_utilization_percent_is_none_for_zero_logical_cpus() {
+        assert_eq!(cpu_utilization_percent(Some(0)), None);
+        assert_eq!(cpu_utilization_percent(None), None);
     }
 }

@@ -231,15 +231,24 @@ pub fn worker_install(config: Option<String>) {
         .unwrap_or_else(|e| fail(&format!("writing {}: {}", SYSUSERS_CONF_PATH, e)));
     run_checked("systemd-sysusers", &[SYSUSERS_CONF_PATH]).unwrap_or_else(|e| fail(&e));
 
-    // 2. Install the binary this command was invoked from.
+    // 2. Install the binary this command was invoked from. Copy to a temp file in
+    // the same directory and rename() over the destination rather than overwriting
+    // it directly - a plain overwrite fails with "Text file busy" whenever the
+    // service is already running the file being replaced (the normal case for
+    // reinstalling/upgrading an active worker), since rename() atomically repoints
+    // the directory entry without needing the old inode to be unmapped, while a
+    // direct write does.
     std::fs::create_dir_all(BIN_DIR)
         .unwrap_or_else(|e| fail(&format!("creating {}: {}", BIN_DIR, e)));
     let current_exe = std::env::current_exe()
         .unwrap_or_else(|e| fail(&format!("resolving current executable: {}", e)));
-    std::fs::copy(&current_exe, BIN_PATH)
+    let bin_tmp_path = format!("{}.new", BIN_PATH);
+    std::fs::copy(&current_exe, &bin_tmp_path)
+        .unwrap_or_else(|e| fail(&format!("installing binary to {}: {}", bin_tmp_path, e)));
+    std::fs::set_permissions(&bin_tmp_path, std::fs::Permissions::from_mode(0o755))
+        .unwrap_or_else(|e| fail(&format!("setting permissions on {}: {}", bin_tmp_path, e)));
+    std::fs::rename(&bin_tmp_path, BIN_PATH)
         .unwrap_or_else(|e| fail(&format!("installing binary to {}: {}", BIN_PATH, e)));
-    std::fs::set_permissions(BIN_PATH, std::fs::Permissions::from_mode(0o755))
-        .unwrap_or_else(|e| fail(&format!("setting permissions on {}: {}", BIN_PATH, e)));
 
     // 3. Config, readable by the service account via group membership.
     std::fs::create_dir_all(ETC_DIR)

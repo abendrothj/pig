@@ -292,6 +292,31 @@ impl Coordinator {
         }
         response.json::<ModelResponse>().map_err(|e| e.to_string())
     }
+
+    /// Fetches one worker's current metrics snapshot on demand. Purely an
+    /// observability read, not part of routing - `lao-cli workers metrics` is the
+    /// only caller today.
+    pub fn worker_metrics(
+        &self,
+        worker_id: &str,
+    ) -> Result<lao_orchestrator_core::model::WorkerMetricsSnapshot, String> {
+        let worker = self
+            .workers
+            .iter()
+            .find(|w| w.id == worker_id)
+            .ok_or_else(|| format!("unknown worker '{}'", worker_id))?;
+        let mut http_request = self.client.get(format!("{}/v1/metrics", worker.url));
+        if let Some(token) = self.auth_header(worker) {
+            http_request = http_request.bearer_auth(token);
+        }
+        let response = http_request.send().map_err(|e| e.to_string())?;
+        if !response.status().is_success() {
+            return Err(format!("worker returned {}", response.status()));
+        }
+        response
+            .json::<lao_orchestrator_core::model::WorkerMetricsSnapshot>()
+            .map_err(|e| e.to_string())
+    }
 }
 
 impl ModelInvoker for Coordinator {

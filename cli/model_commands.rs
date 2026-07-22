@@ -4,9 +4,11 @@
 //! `lao.toml`, else `config/lao.toml`), rather than inventing a parallel convention.
 
 use lao_orchestrator_core::model::{
-    record_benchmark, BenchmarkFingerprint, BenchmarkRecord, GenerationParameters, MessageRole,
-    ModelId, ModelInvoker, ModelMessage, ModelRegistry, ModelRequest, ModelRequirements, ModelRole,
-    ModelSelector, RequestId, SchedulingOverrides,
+    load_benchmark_records, record_benchmark, BenchmarkFingerprint, BenchmarkFreshness,
+    BenchmarkRecord, CoordinatorMetricsSnapshot, GenerationParameters, MessageRole, ModelId,
+    ModelInvoker, ModelLoadState, ModelMessage, ModelRegistry, ModelRequest, ModelRequirements,
+    ModelRole, ModelSelector, RequestId, SchedulingOverrides, WorkerLifecycleState,
+    WorkerMetricsSnapshot, METRICS_SCHEMA_VERSION,
 };
 use lao_worker::coordinator::{Coordinator, WorkerEndpointConfig, WorkersConfig};
 use std::collections::BTreeMap;
@@ -147,6 +149,7 @@ pub fn worker_serve(config: Option<String>) {
             started_at: Instant::now(),
             auth_token,
             backend_name,
+            hardware_cache: std::sync::Mutex::new(None),
         });
 
         if let Err(e) = lao_worker::server::serve(state).await {
@@ -233,6 +236,217 @@ fn snapshot_json(snapshots: &[lao_orchestrator_core::model::WorkerSnapshot]) -> 
             "known_models": s.known_models.iter().map(|m| m.0.clone()).collect::<Vec<_>>(),
         }))
         .collect::<Vec<_>>())
+}
+
+/// `worker_id` given -> that one worker's live telemetry. Omitted -> a coordinator-
+/// wide aggregate built entirely from functions that already exist elsewhere
+/// (`coordinator.snapshots()`, the same `worker_metrics()` client used for the
+/// single-worker case, and the existing benchmark-history functions) - not a new
+/// aggregation framework, just summing numbers that are already computed somewhere.
+pub fn workers_metrics(worker_id: Option<String>, json: bool) {
+    let workers = load_workers();
+    let coordinator = Coordinator::new(workers, load_registry());
+
+    match worker_id {
+        Some(id) => {
+            let snapshot = match coordinator.worker_metrics(&id) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("[ERROR] {}", e);
+                    std::process::exit(1);
+                }
+            };
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&snapshot).unwrap_or_default()
+                );
+            } else {
+                println!("{}", format_worker_metrics(&snapshot));
+            }
+        }
+        None => {
+            let snapshot = coordinator_metrics_snapshot(&coordinator);
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&snapshot).unwrap_or_default()
+                );
+            } else {
+                println!("{}", format_coordinator_metrics(&snapshot));
+            }
+        }
+    }
+}
+
+fn coordinator_metrics_snapshot(coordinator: &Coordinator) -> CoordinatorMetricsSnapshot {
+    let snapshots = coordinator.snapshots();
+    let known_workers = snapshots.len();
+    let connected: Vec<_> = snapshots.iter().filter(|s| s.healthy).collect();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+
+    let mut successful_jobs = 0u64;
+    let mut failed_jobs = 0u64;
+    let mut benchmarks = Vec::new();
+    for snap in &connected {
+        if let Ok(m) = coordinator.worker_metrics(&snap.worker_id.0) {
+            successful_jobs += m.jobs.completed;
+            failed_jobs += m.jobs.failed;
+        }
+        for model_id in &snap.known_models {
+            let latest = load_benchmark_records(model_id)
+                .into_iter()
+                .filter(|r| r.worker_id == snap.worker_id)
+                .max_by_key(|r| r.timestamp_unix_ms);
+            let age_seconds = latest.map(|r| now.saturating_sub(r.timestamp_unix_ms) / 1000);
+            benchmarks.push(BenchmarkFreshness {
+                worker_id: snap.worker_id.clone(),
+                model_id: model_id.clone(),
+                age_seconds,
+                fingerprint_valid: snap.benchmarks.contains_key(model_id),
+            });
+        }
+    }
+
+    CoordinatorMetricsSnapshot {
+        schema_version: METRICS_SCHEMA_VERSION,
+        timestamp_unix_ms: now,
+        known_workers,
+        connected_workers: connected.len(),
+        active_jobs: snapshots.iter().map(|s| s.active_jobs).sum(),
+        queued_jobs: snapshots.iter().map(|s| s.queue_depth).sum(),
+        successful_jobs,
+        failed_jobs,
+        // See core::model::metrics's module doc: no honest cumulative owner exists
+        // for this on an ephemeral CLI-process coordinator.
+        scheduler_decision: None,
+        benchmarks,
+    }
+}
+
+fn opt_pct(v: Option<f32>) -> String {
+    match v {
+        Some(x) => format!("{:.0}%", x),
+        None => "unavailable".to_string(),
+    }
+}
+
+fn opt_tps(v: Option<f64>) -> String {
+    match v {
+        Some(x) => format!("{:.1} tok/s", x),
+        None => "unavailable".to_string(),
+    }
+}
+
+fn format_gib(bytes: u64) -> String {
+    format!("{:.1} GiB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+}
+
+fn format_worker_metrics(m: &WorkerMetricsSnapshot) -> String {
+    let state = match m.worker.lifecycle_state {
+        WorkerLifecycleState::Idle => "idle",
+        WorkerLifecycleState::Loading => "loading",
+        WorkerLifecycleState::Running => "running",
+    };
+    let hours = m.worker.uptime_seconds / 3600;
+    let minutes = (m.worker.uptime_seconds % 3600) / 60;
+
+    let mut out = String::new();
+    out.push_str(&format!("Worker: {}\n", m.worker.worker_id));
+    out.push_str(&format!("State: {}\n", state));
+    out.push_str(&format!("Uptime: {}h {}m\n\n", hours, minutes));
+
+    out.push_str(&format!(
+        "Queue: {} / {}\n",
+        m.queue.depth, m.queue.capacity
+    ));
+    out.push_str(&format!(
+        "Jobs: {} active, {} completed, {} failed, {} cancelled\n\n",
+        m.jobs.active, m.jobs.completed, m.jobs.failed, m.jobs.cancelled
+    ));
+
+    match &m.model.loaded_model_id {
+        Some(id) => out.push_str(&format!("Model: {}\n", id)),
+        None => {
+            let state = match m.model.load_state {
+                ModelLoadState::NotLoaded => "not loaded",
+                ModelLoadState::Loading => "loading",
+                ModelLoadState::Loaded => "loaded",
+            };
+            out.push_str(&format!("Model: none ({})\n", state));
+        }
+    }
+
+    if let Some(name) = &m.accelerator.name {
+        out.push_str(&format!("GPU: {}\n", name));
+        out.push_str(&format!(
+            "GPU utilization: {}\n",
+            opt_pct(m.accelerator.utilization_percent)
+        ));
+        match (
+            m.accelerator.memory_used_bytes,
+            m.accelerator.memory_total_bytes,
+        ) {
+            (Some(used), Some(total)) => out.push_str(&format!(
+                "VRAM: {} / {}\n",
+                format_gib(used),
+                format_gib(total)
+            )),
+            _ => out.push_str("VRAM: unavailable\n"),
+        }
+    } else {
+        out.push_str("Accelerator: none\n");
+    }
+    out.push('\n');
+
+    out.push_str(&format!(
+        "Prompt throughput: {}\n",
+        opt_tps(m.throughput.last_prompt_tokens_per_second)
+    ));
+    out.push_str(&format!(
+        "Generation throughput: {}\n",
+        opt_tps(m.throughput.last_generation_tokens_per_second)
+    ));
+
+    out
+}
+
+fn format_coordinator_metrics(m: &CoordinatorMetricsSnapshot) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("Known workers: {}\n", m.known_workers));
+    out.push_str(&format!("Connected workers: {}\n\n", m.connected_workers));
+    out.push_str(&format!("Active jobs: {}\n", m.active_jobs));
+    out.push_str(&format!("Queued jobs: {}\n", m.queued_jobs));
+    out.push_str(&format!(
+        "Jobs: {} successful, {} failed\n\n",
+        m.successful_jobs, m.failed_jobs
+    ));
+    if m.benchmarks.is_empty() {
+        out.push_str("Benchmarks: none recorded\n");
+    } else {
+        out.push_str("Benchmarks:\n");
+        for b in &m.benchmarks {
+            let age = match b.age_seconds {
+                Some(s) => format!("{}s ago", s),
+                None => "no history".to_string(),
+            };
+            out.push_str(&format!(
+                "- {} / {}: {} ({})\n",
+                b.worker_id,
+                b.model_id,
+                if b.fingerprint_valid {
+                    "valid"
+                } else {
+                    "stale"
+                },
+                age
+            ));
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -791,5 +1005,176 @@ pub fn jobs_cancel(job_id: String, worker: String) {
             eprintln!("[ERROR] {}", e);
             std::process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod metrics_formatting_tests {
+    use super::*;
+    use lao_orchestrator_core::model::{
+        AcceleratorKind, AcceleratorMetrics, JobMetrics, ModelMetrics, QueueMetrics, SystemMetrics,
+        ThroughputMetrics, WorkerId, WorkerIdentityMetrics,
+    };
+
+    fn fully_populated() -> WorkerMetricsSnapshot {
+        WorkerMetricsSnapshot {
+            schema_version: METRICS_SCHEMA_VERSION,
+            timestamp_unix_ms: 0,
+            worker: WorkerIdentityMetrics {
+                worker_id: WorkerId::from("fedora-worker"),
+                uptime_seconds: 8_040, // 2h 14m
+                lifecycle_state: WorkerLifecycleState::Running,
+            },
+            queue: QueueMetrics {
+                capacity: 8,
+                depth: 1,
+            },
+            jobs: JobMetrics {
+                active: 1,
+                completed: 42,
+                failed: 1,
+                cancelled: 0,
+                cumulative_tokens_processed: 999,
+            },
+            model: ModelMetrics {
+                loaded_model_id: Some(ModelId::from("qwen2.5-8b-q4")),
+                load_state: ModelLoadState::Loaded,
+                last_load_duration_ms: Some(1_204),
+            },
+            system: SystemMetrics {
+                memory_used_bytes: Some(4_000_000_000),
+                memory_total_bytes: Some(16_000_000_000),
+                cpu_utilization_percent: Some(12.5),
+            },
+            accelerator: AcceleratorMetrics {
+                kind: Some(AcceleratorKind::Cuda),
+                name: Some("NVIDIA GeForce RTX 2080 SUPER".to_string()),
+                utilization_percent: Some(84.0),
+                memory_used_bytes: Some(7_086_696_038), // ~6.6 GiB
+                memory_total_bytes: Some(8_589_934_592), // 8.0 GiB
+            },
+            throughput: ThroughputMetrics {
+                last_prompt_tokens_per_second: Some(521.0),
+                last_generation_tokens_per_second: Some(78.4),
+            },
+        }
+    }
+
+    fn all_optionals_absent() -> WorkerMetricsSnapshot {
+        WorkerMetricsSnapshot {
+            schema_version: METRICS_SCHEMA_VERSION,
+            timestamp_unix_ms: 0,
+            worker: WorkerIdentityMetrics {
+                worker_id: WorkerId::from("idle-worker"),
+                uptime_seconds: 30,
+                lifecycle_state: WorkerLifecycleState::Idle,
+            },
+            queue: QueueMetrics {
+                capacity: 8,
+                depth: 0,
+            },
+            jobs: JobMetrics::default(),
+            model: ModelMetrics {
+                loaded_model_id: None,
+                load_state: ModelLoadState::NotLoaded,
+                last_load_duration_ms: None,
+            },
+            system: SystemMetrics::default(),
+            accelerator: AcceleratorMetrics::default(),
+            throughput: ThroughputMetrics::default(),
+        }
+    }
+
+    #[test]
+    fn formats_a_fully_populated_snapshot_matching_the_expected_shape() {
+        let out = format_worker_metrics(&fully_populated());
+        assert!(out.contains("Worker: fedora-worker"));
+        assert!(out.contains("State: running"));
+        assert!(out.contains("Uptime: 2h 14m"));
+        assert!(out.contains("Queue: 1 / 8"));
+        assert!(out.contains("Jobs: 1 active, 42 completed, 1 failed, 0 cancelled"));
+        assert!(out.contains("Model: qwen2.5-8b-q4"));
+        assert!(out.contains("GPU: NVIDIA GeForce RTX 2080 SUPER"));
+        assert!(out.contains("GPU utilization: 84%"));
+        assert!(out.contains("VRAM: 6.6 GiB / 8.0 GiB"));
+        assert!(out.contains("Prompt throughput: 521.0 tok/s"));
+        assert!(out.contains("Generation throughput: 78.4 tok/s"));
+    }
+
+    #[test]
+    fn missing_measurements_render_as_unavailable_not_zero() {
+        let out = format_worker_metrics(&all_optionals_absent());
+        assert!(out.contains("Model: none (not loaded)"));
+        assert!(out.contains("Accelerator: none"));
+        assert!(out.contains("Prompt throughput: unavailable"));
+        assert!(out.contains("Generation throughput: unavailable"));
+        assert!(
+            !out.contains("0%") && !out.contains("0.0 tok/s"),
+            "an unavailable measurement must never be rendered as a fabricated zero: {}",
+            out
+        );
+    }
+
+    #[test]
+    fn coordinator_metrics_distinguishes_no_history_from_stale_benchmarks() {
+        let snapshot = CoordinatorMetricsSnapshot {
+            schema_version: METRICS_SCHEMA_VERSION,
+            timestamp_unix_ms: 0,
+            known_workers: 2,
+            connected_workers: 1,
+            active_jobs: 1,
+            queued_jobs: 0,
+            successful_jobs: 42,
+            failed_jobs: 1,
+            scheduler_decision: None,
+            benchmarks: vec![
+                BenchmarkFreshness {
+                    worker_id: WorkerId::from("fedora-worker"),
+                    model_id: ModelId::from("qwen2.5-8b-q4"),
+                    age_seconds: Some(120),
+                    fingerprint_valid: true,
+                },
+                BenchmarkFreshness {
+                    worker_id: WorkerId::from("fedora-worker"),
+                    model_id: ModelId::from("old-model"),
+                    age_seconds: Some(999_999),
+                    fingerprint_valid: false,
+                },
+                BenchmarkFreshness {
+                    worker_id: WorkerId::from("fedora-worker"),
+                    model_id: ModelId::from("never-benchmarked"),
+                    age_seconds: None,
+                    fingerprint_valid: false,
+                },
+            ],
+        };
+        let out = format_coordinator_metrics(&snapshot);
+        assert!(out.contains("Known workers: 2"));
+        assert!(out.contains("Connected workers: 1"));
+        assert!(out.contains("Jobs: 42 successful, 1 failed"));
+        assert!(out.contains("qwen2.5-8b-q4: valid (120s ago)"));
+        assert!(out.contains("old-model: stale (999999s ago)"));
+        assert!(
+            out.contains("never-benchmarked: stale (no history)"),
+            "a model with no benchmark history at all must read distinctly from a stale one: {}",
+            out
+        );
+    }
+
+    #[test]
+    fn coordinator_metrics_with_no_benchmarks_says_so_explicitly() {
+        let snapshot = CoordinatorMetricsSnapshot {
+            schema_version: METRICS_SCHEMA_VERSION,
+            timestamp_unix_ms: 0,
+            known_workers: 1,
+            connected_workers: 1,
+            active_jobs: 0,
+            queued_jobs: 0,
+            successful_jobs: 0,
+            failed_jobs: 0,
+            scheduler_decision: None,
+            benchmarks: vec![],
+        };
+        assert!(format_coordinator_metrics(&snapshot).contains("Benchmarks: none recorded"));
     }
 }

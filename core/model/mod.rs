@@ -7,6 +7,7 @@
 
 pub mod benchmark;
 pub mod invoker;
+pub mod metrics;
 pub mod registry;
 pub mod scheduler;
 pub mod types;
@@ -16,6 +17,11 @@ pub use benchmark::{
     worker_hardware_fingerprint, BenchmarkFingerprint, BenchmarkRecord,
 };
 pub use invoker::ModelInvoker;
+pub use metrics::{
+    AcceleratorMetrics, BenchmarkFreshness, CoordinatorMetricsSnapshot, JobMetrics, ModelLoadState,
+    ModelMetrics, QueueMetrics, SchedulerDecisionMetrics, SystemMetrics, ThroughputMetrics,
+    WorkerIdentityMetrics, WorkerLifecycleState, WorkerMetricsSnapshot, METRICS_SCHEMA_VERSION,
+};
 pub use registry::{
     discover_gguf_files, ModelEntry, ModelRegistry, RegistryError, ResolvedModelEntry,
 };
