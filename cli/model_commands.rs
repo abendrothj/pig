@@ -310,15 +310,34 @@ pub fn models_discover(directory: String) {
     }
 }
 
+/// Attach the worker's bearer token (if configured and its env var is set) to a
+/// request. The `Coordinator`-based paths (`workers *`, non-streaming `models
+/// generate`, `models benchmark`) get this for free; every direct HTTP call the CLI
+/// makes against a worker's own endpoints has to do it explicitly.
+fn with_worker_auth(
+    mut req: reqwest::blocking::RequestBuilder,
+    target: &WorkerEndpointConfig,
+) -> reqwest::blocking::RequestBuilder {
+    if let Some(var) = &target.auth_token_env {
+        if let Ok(token) = std::env::var(var) {
+            req = req.bearer_auth(token);
+        }
+    }
+    req
+}
+
 pub fn models_load(model_id: String, worker: Option<String>) {
     require_model_inference_trust();
     let workers = require_workers();
     let target = resolve_target_worker(&workers, worker);
     let client = reqwest::blocking::Client::new();
-    let resp = client
-        .post(format!("{}/v1/models/load", target.url))
-        .json(&serde_json::json!({"model_id": model_id}))
-        .send();
+    let resp = with_worker_auth(
+        client
+            .post(format!("{}/v1/models/load", target.url))
+            .json(&serde_json::json!({"model_id": model_id})),
+        &target,
+    )
+    .send();
     match resp {
         Ok(r) if r.status().is_success() => {
             println!("{}", r.text().unwrap_or_default());
@@ -342,10 +361,13 @@ pub fn models_unload(model_id: String, worker: Option<String>) {
     let workers = require_workers();
     let target = resolve_target_worker(&workers, worker);
     let client = reqwest::blocking::Client::new();
-    let resp = client
-        .post(format!("{}/v1/models/unload", target.url))
-        .json(&serde_json::json!({"model_id": model_id}))
-        .send();
+    let resp = with_worker_auth(
+        client
+            .post(format!("{}/v1/models/unload", target.url))
+            .json(&serde_json::json!({"model_id": model_id})),
+        &target,
+    )
+    .send();
     match resp {
         Ok(r) if r.status().is_success() => println!("Unloaded."),
         Ok(r) => {
@@ -490,14 +512,12 @@ fn stream_generate(target: &WorkerEndpointConfig, request: &ModelRequest) {
         map.insert("stream".to_string(), serde_json::Value::Bool(true));
     }
     let client = reqwest::blocking::Client::new();
-    let mut req = client
-        .post(format!("{}/v1/generate", target.url))
-        .json(&body);
-    if let Some(var) = &target.auth_token_env {
-        if let Ok(token) = std::env::var(var) {
-            req = req.bearer_auth(token);
-        }
-    }
+    let req = with_worker_auth(
+        client
+            .post(format!("{}/v1/generate", target.url))
+            .json(&body),
+        target,
+    );
     let response = match req.send() {
         Ok(r) => r,
         Err(e) => {
@@ -696,7 +716,7 @@ pub fn jobs_list(worker: String, json: bool) {
     let workers = require_workers();
     let target = resolve_target_worker(&workers, Some(worker));
     let client = reqwest::blocking::Client::new();
-    match client.get(format!("{}/v1/jobs", target.url)).send() {
+    match with_worker_auth(client.get(format!("{}/v1/jobs", target.url)), &target).send() {
         Ok(r) => {
             let text = r.text().unwrap_or_default();
             if json {
@@ -726,9 +746,11 @@ pub fn jobs_inspect(job_id: String, worker: String, json: bool) {
     let workers = require_workers();
     let target = resolve_target_worker(&workers, Some(worker));
     let client = reqwest::blocking::Client::new();
-    match client
-        .get(format!("{}/v1/jobs/{}", target.url, job_id))
-        .send()
+    match with_worker_auth(
+        client.get(format!("{}/v1/jobs/{}", target.url, job_id)),
+        &target,
+    )
+    .send()
     {
         Ok(r) if r.status().is_success() => {
             let text = r.text().unwrap_or_default();
@@ -754,9 +776,11 @@ pub fn jobs_cancel(job_id: String, worker: String) {
     let workers = require_workers();
     let target = resolve_target_worker(&workers, Some(worker));
     let client = reqwest::blocking::Client::new();
-    match client
-        .post(format!("{}/v1/jobs/{}/cancel", target.url, job_id))
-        .send()
+    match with_worker_auth(
+        client.post(format!("{}/v1/jobs/{}/cancel", target.url, job_id)),
+        &target,
+    )
+    .send()
     {
         Ok(r) if r.status().is_success() => println!("Cancellation requested."),
         Ok(r) => {
