@@ -8,7 +8,6 @@ use lao_orchestrator_core::{
     cross_platform::PathUtils,
     load_workflow_yaml,
     plugins::PluginRegistry,
-    run_workflow_yaml,
     scheduler::WorkflowScheduler,
     trust::{CapabilityClass, TrustPolicy},
     workflow_state::WorkflowSchedule,
@@ -333,7 +332,11 @@ fn main() {
                     }
                 }
             } else {
-                match run_workflow_yaml(&path) {
+                let mut executor = lao_orchestrator_core::WorkflowExecutor::with_defaults();
+                if let Some(invoker) = model_commands::build_model_invoker() {
+                    executor = executor.with_model_invoker(invoker);
+                }
+                match executor.run(&path, |_event| {}) {
                     Ok(results) => {
                         let has_errors = results.iter().any(|step| step.error.is_some());
                         if has_errors {

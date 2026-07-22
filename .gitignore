@@ -50,3 +50,4 @@ cache/
 workflow_states/
 plugins_runtime/
 .whisper_cpp_path
+.lao_benchmarks/

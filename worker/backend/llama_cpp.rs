@@ -521,16 +521,27 @@ impl ModelBackend for LlamaCppBackend {
                 };
 
                 if let Some(choice) = value.get("choices").and_then(|c| c.get(0)) {
-                    if let Some(delta_content) = choice
-                        .get("delta")
+                    // Reasoning models (e.g. Qwen3) emit chain-of-thought under a
+                    // separate `reasoning_content` field, distinct from `content` -
+                    // confirmed against the real installed llama-server. Treating only
+                    // `content` as the output means a "thinking" model can hit
+                    // finish_reason=length having produced only reasoning tokens,
+                    // yielding a silently empty response. Both are captured as output.
+                    let delta = choice.get("delta");
+                    let delta_text = delta
                         .and_then(|d| d.get("content"))
                         .and_then(|c| c.as_str())
-                    {
-                        content.push_str(delta_content);
+                        .or_else(|| {
+                            delta
+                                .and_then(|d| d.get("reasoning_content"))
+                                .and_then(|c| c.as_str())
+                        });
+                    if let Some(delta_text) = delta_text {
+                        content.push_str(delta_text);
                         completion_tokens += 1;
                         let _ = events
                             .send(ModelStreamEvent::Token {
-                                text: delta_content.to_string(),
+                                text: delta_text.to_string(),
                             })
                             .await;
                     }
@@ -564,6 +575,16 @@ impl ModelBackend for LlamaCppBackend {
                         .unwrap_or(0.0) as u64;
                     prompt_tps = timings.get("prompt_per_second").and_then(|v| v.as_f64());
                     gen_tps = timings.get("predicted_per_second").and_then(|v| v.as_f64());
+                    // This build of llama-server does not include a `usage` object in
+                    // streaming responses (confirmed live) - `timings.{prompt,predicted}_n`
+                    // are the authoritative token counts in that case, and arrive in the
+                    // same final chunk as `finish_reason`.
+                    if let Some(n) = timings.get("prompt_n").and_then(|v| v.as_u64()) {
+                        prompt_tokens = n as u32;
+                    }
+                    if let Some(n) = timings.get("predicted_n").and_then(|v| v.as_u64()) {
+                        completion_tokens = n as u32;
+                    }
                 }
             }
         }

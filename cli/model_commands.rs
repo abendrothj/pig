@@ -50,6 +50,22 @@ fn require_workers() -> Vec<WorkerEndpointConfig> {
     workers
 }
 
+/// Builds a `ModelInvoker` from `[[workers]]` config when any are configured, so
+/// `lao-cli run` can execute `local_llm` steps. Returns `None` (not an error) when no
+/// workers are configured - workflows without any `local_llm` step are completely
+/// unaffected, and one with a `local_llm` step will fail with a clear per-step error
+/// from `StepExecutor` rather than this function guessing at a default.
+pub fn build_model_invoker() -> Option<std::sync::Arc<dyn ModelInvoker>> {
+    let workers = load_workers();
+    if workers.is_empty() {
+        return None;
+    }
+    Some(std::sync::Arc::new(Coordinator::new(
+        workers,
+        load_registry(),
+    )))
+}
+
 fn require_model_inference_trust() {
     let trust = lao_orchestrator_core::trust::TrustPolicy::load_default();
     if !trust.allows_class(lao_orchestrator_core::trust::CapabilityClass::ModelInference) {
@@ -492,19 +508,28 @@ fn stream_generate(target: &WorkerEndpointConfig, request: &ModelRequest) {
         eprintln!("[ERROR] worker returned {}", response.status());
         std::process::exit(1);
     }
+    // Real SSE wire format (axum's Event::default().event(name).data(payload)): the
+    // event name and payload arrive on separate lines within one event block, and the
+    // "token" payload is the raw generated text, not a JSON envelope. A blank line
+    // ends the block. Only the "response" event's payload is JSON.
     let reader = BufReader::new(response);
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
+    let mut current_event: Option<String> = None;
     for line in reader.lines().map_while(Result::ok) {
+        if let Some(name) = line.strip_prefix("event: ") {
+            current_event = Some(name.to_string());
+            continue;
+        }
         if let Some(payload) = line.strip_prefix("data: ") {
-            if let Ok(event) = serde_json::from_str::<serde_json::Value>(payload) {
-                if event.get("type").and_then(|t| t.as_str()) == Some("token") {
-                    if let Some(text) = event.get("text").and_then(|t| t.as_str()) {
-                        let _ = write!(out, "{}", text);
-                        let _ = out.flush();
-                    }
-                }
+            if current_event.as_deref() == Some("token") {
+                let _ = write!(out, "{}", payload);
+                let _ = out.flush();
             }
+            continue;
+        }
+        if line.is_empty() {
+            current_event = None;
         }
     }
     println!();
