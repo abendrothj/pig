@@ -7,10 +7,15 @@
 
 pub mod invoker;
 pub mod registry;
+pub mod scheduler;
 pub mod types;
 
 pub use invoker::ModelInvoker;
 pub use registry::{
     discover_gguf_files, ModelEntry, ModelRegistry, RegistryError, ResolvedModelEntry,
+};
+pub use scheduler::{
+    schedule, CandidatePlacement, RejectedCandidate, RoutingExplanation, SchedulingOverrides,
+    ScoreComponent, WorkerLocality, WorkerSnapshot,
 };
 pub use types::*;

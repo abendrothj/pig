@@ -4,6 +4,7 @@
 
 pub mod backend;
 pub mod config;
+pub mod coordinator;
 pub mod hardware;
 pub mod job;
 pub mod server;
