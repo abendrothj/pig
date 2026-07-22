@@ -1,7 +1,15 @@
 use clap::{Parser, Subcommand};
 use lao_orchestrator_core::{
-    cross_platform::PathUtils, load_workflow_yaml, plugins::PluginRegistry, run_workflow_yaml,
-    scheduler::WorkflowScheduler, trust::TrustPolicy, workflow_state::WorkflowSchedule,
+    code_intelligence::{
+        CachingProvider, CodeIntelligenceProvider, CodebaseMemoryCliProvider, GraphOperation,
+    },
+    cross_platform::PathUtils,
+    load_workflow_yaml,
+    plugins::PluginRegistry,
+    run_workflow_yaml,
+    scheduler::WorkflowScheduler,
+    trust::{CapabilityClass, TrustPolicy},
+    workflow_state::WorkflowSchedule,
 };
 use serde::Deserialize;
 
@@ -109,6 +117,24 @@ enum Commands {
             help = "Remove states older than this many hours"
         )]
         max_age_hours: u64,
+    },
+    /// List configured code intelligence providers
+    ProviderList,
+    /// Check code intelligence provider availability
+    ProviderHealth,
+    /// Run an allowlisted read-only code-graph query against the configured provider
+    CodeGraphQuery {
+        #[arg(
+            help = "search_graph | search_code | trace_path | get_code_snippet | get_architecture | query_graph | index_status"
+        )]
+        operation: String,
+        #[arg(
+            default_value = "{}",
+            help = "JSON arguments, e.g. '{\"project\":\"myrepo\"}'"
+        )]
+        args: String,
+        #[arg(long, help = "Emit machine-readable JSON output")]
+        json: bool,
     },
 }
 
@@ -648,6 +674,138 @@ fn main() {
             match scheduler.cleanup_old_states(max_age_hours) {
                 Ok(count) => println!("✓ Cleaned up {} old workflow states", count),
                 Err(e) => eprintln!("[ERROR] Failed to cleanup states: {}", e),
+            }
+        }
+        Commands::ProviderList => {
+            let repo_root =
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            println!("Configured code intelligence providers:");
+            match CodebaseMemoryCliProvider::discover(repo_root) {
+                Ok(provider) => {
+                    let meta = provider.metadata();
+                    println!(
+                        "- {} ({})",
+                        meta.name,
+                        meta.version.as_deref().unwrap_or("unknown version")
+                    );
+                }
+                Err(e) => {
+                    println!("- codebase-memory-mcp (not available: {})", e);
+                }
+            }
+        }
+        Commands::ProviderHealth => {
+            let repo_root =
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let provider = match CodebaseMemoryCliProvider::discover(repo_root) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("[ERROR] {}", e);
+                    std::process::exit(1);
+                }
+            };
+            match provider.health() {
+                Ok(health) => {
+                    println!(
+                        "codebase-memory-mcp: {}",
+                        if health.available {
+                            "available"
+                        } else {
+                            "unavailable"
+                        }
+                    );
+                    println!("  {}", health.detail);
+                    if !health.available {
+                        std::process::exit(1);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[ERROR] health check failed: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::CodeGraphQuery {
+            operation,
+            args,
+            json,
+        } => {
+            let Some(op) = GraphOperation::from_tool_name(&operation) else {
+                eprintln!(
+                    "[ERROR] unsupported code-graph operation '{}'; supported: {}",
+                    operation,
+                    GraphOperation::ALL
+                        .iter()
+                        .map(|o| o.tool_name())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                std::process::exit(1);
+            };
+
+            if !TrustPolicy::load_default().allows_class(CapabilityClass::CodeGraphRead) {
+                eprintln!(
+                    "[ERROR] code-graph access denied: set trust.allow_code_graph_read in lao.toml"
+                );
+                std::process::exit(1);
+            }
+
+            let parsed_args: serde_json::Value = match serde_json::from_str(&args) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("[ERROR] failed to parse --args as JSON: {}", e);
+                    std::process::exit(1);
+                }
+            };
+
+            let repo_root =
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let cache_dir = repo_root
+                .join(std::env::var("LAO_CACHE_DIR").unwrap_or_else(|_| "cache".to_string()))
+                .join("code_graph");
+
+            let provider = match CodebaseMemoryCliProvider::discover(repo_root.clone()) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("[ERROR] {}", e);
+                    std::process::exit(1);
+                }
+            };
+            let provider = CachingProvider::new(provider, repo_root, cache_dir);
+
+            match provider.query(op, parsed_args) {
+                Ok(artifact) => {
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&artifact).unwrap_or_default()
+                        );
+                    } else {
+                        println!(
+                            "Provider: {} ({})",
+                            artifact.provider,
+                            artifact
+                                .provider_version
+                                .as_deref()
+                                .unwrap_or("unknown version")
+                        );
+                        println!("Repo: {}", artifact.repo_root.display());
+                        println!(
+                            "Revision: {}",
+                            artifact.git_revision.as_deref().unwrap_or("unknown")
+                        );
+                        println!("Dirty: {}", artifact.dirty);
+                        println!("Operation: {}", artifact.operation);
+                        println!(
+                            "Result:\n{}",
+                            serde_json::to_string_pretty(&artifact.payload).unwrap_or_default()
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[ERROR] {}", e);
+                    std::process::exit(1);
+                }
             }
         }
     }

@@ -12,6 +12,15 @@ name = "lao_orchestrator_core"
 path = "lib.rs"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# Test-only fixture: a fake codebase-memory-mcp executable used by
+# code_intelligence_provider_test.rs to exercise CodebaseMemoryCliProvider against a
+# real child process without depending on the real tool being installed.
+[[bin]]
+name = "fake_codebase_memory_mcp"
+path = "tests/fixtures/fake_codebase_memory_mcp.rs"
+test = false
+doc = false
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -6,6 +6,7 @@ allow_filesystem_enumerate = false
 allow_shell = false
 allow_network = false
 allow_subprocess = false
+allow_code_graph_read = false
 
 # Explicit filesystem roots only — no implicit cwd/repo root.
 # Required when any filesystem_* capability is enabled.
@@ -17,3 +18,7 @@ network_endpoints = []
 
 # Optional escape hatch for specific trusted plugins.
 allow_plugins = []
+
+# `code-graph query` (read-only structural code intelligence via codebase-memory-mcp)
+# requires allow_code_graph_read = true above. The provider binary is resolved from
+# LAO_CODEBASE_MEMORY_MCP_PATH if set, else from PATH.
