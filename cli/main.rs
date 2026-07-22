@@ -1,4 +1,5 @@
 mod model_commands;
+mod worker_lifecycle;
 
 use clap::{Parser, Subcommand};
 use lao_orchestrator_core::{
@@ -170,6 +171,31 @@ enum WorkerAction {
     Serve {
         #[arg(long, help = "Path to lao.toml (default: ./lao.toml)")]
         config: Option<String>,
+    },
+    /// Install the worker as a systemd service (Linux only, requires root)
+    Install {
+        #[arg(long, help = "Path to lao.toml (default: ./lao.toml)")]
+        config: Option<String>,
+    },
+    /// Remove the systemd service, its config/token files, and the ACL grant
+    Uninstall {
+        #[arg(long, help = "Also remove the dedicated lao-worker service account")]
+        purge_user: bool,
+    },
+    /// Start the installed systemd service
+    Start,
+    /// Stop the installed systemd service
+    Stop,
+    /// Restart the installed systemd service
+    Restart,
+    /// Show systemd + backend health status for the installed service
+    Status,
+    /// Show journald logs for the installed service
+    Logs {
+        #[arg(long, help = "Follow the log (like tail -f)")]
+        follow: bool,
+        #[arg(long, help = "Number of recent lines to show")]
+        lines: Option<u32>,
     },
 }
 
@@ -970,6 +996,15 @@ fn main() {
         }
         Commands::Worker { action } => match action {
             WorkerAction::Serve { config } => model_commands::worker_serve(config),
+            WorkerAction::Install { config } => worker_lifecycle::worker_install(config),
+            WorkerAction::Uninstall { purge_user } => {
+                worker_lifecycle::worker_uninstall(purge_user)
+            }
+            WorkerAction::Start => worker_lifecycle::worker_start(),
+            WorkerAction::Stop => worker_lifecycle::worker_stop(),
+            WorkerAction::Restart => worker_lifecycle::worker_restart(),
+            WorkerAction::Status => worker_lifecycle::worker_status(),
+            WorkerAction::Logs { follow, lines } => worker_lifecycle::worker_logs(follow, lines),
         },
         Commands::Workers { action } => match action {
             WorkersAction::List { json } => model_commands::workers_list(json),
