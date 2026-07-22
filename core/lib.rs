@@ -1,6 +1,7 @@
 // --- LAO Workflow Engine ---
 
 // Platform & infrastructure modules
+pub mod code_intelligence;
 pub mod cross_platform;
 pub mod execution;
 pub mod path_policy;
