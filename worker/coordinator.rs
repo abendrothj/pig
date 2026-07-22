@@ -6,11 +6,13 @@
 //! exists.
 
 use lao_orchestrator_core::model::{
-    schedule, FinishReason, ModelExecutionError, ModelExecutionMetadata, ModelId, ModelInvoker,
-    ModelRegistry, ModelRequest, ModelResponse, ModelResponseStatus, ModelUsage,
-    RoutingExplanation, SchedulingOverrides, WorkerId, WorkerLocality, WorkerSnapshot,
+    latest_matching_benchmark, schedule, BenchmarkFingerprint, BenchmarkSummary, FinishReason,
+    ModelExecutionError, ModelExecutionMetadata, ModelId, ModelInvoker, ModelRegistry,
+    ModelRequest, ModelResponse, ModelResponseStatus, ModelUsage, RoutingExplanation,
+    SchedulingOverrides, WorkerId, WorkerLocality, WorkerSnapshot,
 };
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
 
@@ -94,7 +96,9 @@ impl Coordinator {
             worker_id: WorkerId::from(worker.id.clone()),
             healthy: false,
             backend: "unknown".to_string(),
+            backend_version: None,
             backend_healthy: false,
+            worker_hardware_fingerprint: None,
             accelerators: vec![],
             loaded_models: vec![],
             known_models: vec![],
@@ -104,8 +108,7 @@ impl Coordinator {
             available_memory_bytes: None,
             supports_streaming: false,
             locality: WorkerLocality::Remote,
-            measured_generation_tokens_per_second: None,
-            measured_prompt_tokens_per_second: None,
+            benchmarks: BTreeMap::new(),
             priority: worker.priority,
         };
 
@@ -146,6 +149,10 @@ impl Coordinator {
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string();
+        let backend_version = backend_obj
+            .get("version")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
         let accelerators: Vec<lao_orchestrator_core::model::AcceleratorKind> = backend_obj
             .get("accelerators")
             .and_then(|v| v.as_array())
@@ -175,17 +182,65 @@ impl Coordinator {
             })
             .unwrap_or_default();
 
+        // Coarse but real: built the same way at benchmark-record time (see
+        // cli::model_commands::models_benchmark), from data the worker itself reports
+        // rather than a new hardware-probing mechanism.
+        let hardware_fp = caps.get("hardware").map(|hw| {
+            lao_orchestrator_core::model::worker_hardware_fingerprint(
+                hw.get("os").and_then(|v| v.as_str()).unwrap_or("unknown"),
+                hw.get("arch").and_then(|v| v.as_str()).unwrap_or("unknown"),
+                hw.get("hostname")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown"),
+            )
+        });
+
         let locality = if is_loopback_or_private(&worker.url) {
             WorkerLocality::Local
         } else {
             WorkerLocality::Remote
         };
 
+        // Only ever fingerprint-matched (current) history reaches the scheduler - a
+        // benchmark recorded under different conditions (model file changed, backend
+        // upgraded, different worker hardware, different context/accelerator) is
+        // simply absent here, not present-but-wrong. See BenchmarkFingerprint::matches.
+        let worker_id = WorkerId::from(worker.id.clone());
+        let benchmarks: BTreeMap<ModelId, BenchmarkSummary> = known_models
+            .iter()
+            .filter_map(|model_id| {
+                let entry = self.registry.get(model_id)?;
+                let current_fp = BenchmarkFingerprint {
+                    model_id: model_id.clone(),
+                    model_file_size_bytes: std::fs::metadata(&entry.path).ok().map(|m| m.len()),
+                    model_file_hash: None,
+                    backend: backend.clone(),
+                    backend_version: backend_version.clone(),
+                    worker_hardware_fingerprint: hardware_fp.clone()?,
+                    accelerator: accelerators.first().copied(),
+                    context_tokens: entry.context_tokens,
+                    gpu_layers: None,
+                    cpu_threads: None,
+                    batch_size: None,
+                };
+                let record = latest_matching_benchmark(model_id, &worker_id, &current_fp)?;
+                Some((
+                    model_id.clone(),
+                    BenchmarkSummary {
+                        prompt_tokens_per_second: record.prompt_tokens_per_second,
+                        generation_tokens_per_second: record.generation_tokens_per_second,
+                    },
+                ))
+            })
+            .collect();
+
         WorkerSnapshot {
-            worker_id: WorkerId::from(worker.id.clone()),
+            worker_id,
             healthy,
             backend,
+            backend_version,
             backend_healthy,
+            worker_hardware_fingerprint: hardware_fp,
             accelerators,
             loaded_models: vec![], // not currently exposed distinctly from known_models over HTTP
             known_models,
@@ -195,8 +250,7 @@ impl Coordinator {
             available_memory_bytes: None,
             supports_streaming,
             locality,
-            measured_generation_tokens_per_second: None,
-            measured_prompt_tokens_per_second: None,
+            benchmarks,
             priority: worker.priority,
         }
     }

@@ -5,17 +5,22 @@
 //! server, job queueing) lives in the separate `lao-worker` crate — LAO's core process
 //! never links a model runtime directly.
 
+pub mod benchmark;
 pub mod invoker;
 pub mod registry;
 pub mod scheduler;
 pub mod types;
 
+pub use benchmark::{
+    benchmark_store_dir, latest_matching_benchmark, load_benchmark_records, record_benchmark,
+    worker_hardware_fingerprint, BenchmarkFingerprint, BenchmarkRecord,
+};
 pub use invoker::ModelInvoker;
 pub use registry::{
     discover_gguf_files, ModelEntry, ModelRegistry, RegistryError, ResolvedModelEntry,
 };
 pub use scheduler::{
-    schedule, CandidatePlacement, RejectedCandidate, RoutingExplanation, SchedulingOverrides,
-    ScoreComponent, WorkerLocality, WorkerSnapshot,
+    schedule, BenchmarkSummary, CandidatePlacement, RejectedCandidate, RoutingExplanation,
+    SchedulingOverrides, ScoreComponent, WorkerLocality, WorkerSnapshot,
 };
 pub use types::*;

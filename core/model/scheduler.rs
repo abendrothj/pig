@@ -9,12 +9,26 @@
 
 use crate::model::registry::ModelRegistry;
 use crate::model::types::{AcceleratorKind, ModelId, ModelRequest, WorkerId};
+use std::collections::BTreeMap;
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkerLocality {
     Local,
     Remote,
+}
+
+/// Benchmark-derived throughput for one specific model on one specific worker, already
+/// filtered to only fingerprint-matching (non-stale) history by whoever builds the
+/// `WorkerSnapshot` — see `core::model::benchmark::latest_matching_benchmark`. The
+/// scheduler itself does no fingerprint checking; by the time data reaches here it must
+/// already be current, which is why this is keyed per-model rather than a single
+/// worker-wide scalar (a stale-vs-current distinction is meaningless without knowing
+/// *which* model a measurement was for).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct BenchmarkSummary {
+    pub prompt_tokens_per_second: Option<f64>,
+    pub generation_tokens_per_second: Option<f64>,
 }
 
 /// A point-in-time description of one worker's health and capacity, as reported by
@@ -25,7 +39,12 @@ pub struct WorkerSnapshot {
     pub worker_id: WorkerId,
     pub healthy: bool,
     pub backend: String,
+    pub backend_version: Option<String>,
     pub backend_healthy: bool,
+    /// Same coarse `{os}-{arch}-{hostname}` identity used in `BenchmarkFingerprint`
+    /// (see `core::model::benchmark::worker_hardware_fingerprint`); `None` only when
+    /// the worker's `/v1/capabilities` response is unreadable.
+    pub worker_hardware_fingerprint: Option<String>,
     pub accelerators: Vec<AcceleratorKind>,
     pub loaded_models: Vec<ModelId>,
     pub known_models: Vec<ModelId>,
@@ -35,8 +54,9 @@ pub struct WorkerSnapshot {
     pub available_memory_bytes: Option<u64>,
     pub supports_streaming: bool,
     pub locality: WorkerLocality,
-    pub measured_generation_tokens_per_second: Option<f64>,
-    pub measured_prompt_tokens_per_second: Option<f64>,
+    /// Per-model, already fingerprint-filtered benchmark throughput. Absence of an
+    /// entry for a model means "no current benchmark data," not "zero throughput."
+    pub benchmarks: BTreeMap<ModelId, BenchmarkSummary>,
     pub priority: i64,
 }
 
@@ -283,17 +303,22 @@ fn score_placement(
         }
     }
 
-    if let Some(tps) = worker.measured_generation_tokens_per_second {
-        components.push(ScoreComponent {
-            label: "measured generation throughput".to_string(),
-            value: (tps / 10.0).round() as i64,
-        });
-    }
-    if let Some(tps) = worker.measured_prompt_tokens_per_second {
-        components.push(ScoreComponent {
-            label: "measured prompt-processing throughput".to_string(),
-            value: (tps / 20.0).round() as i64,
-        });
+    // Only ever a fingerprint-matched (current) measurement for this exact model - see
+    // `BenchmarkSummary`'s doc comment. A benchmark for a different model, or a stale
+    // one for this model, is absent here, not present-but-wrong.
+    if let Some(summary) = worker.benchmarks.get(model_id) {
+        if let Some(tps) = summary.generation_tokens_per_second {
+            components.push(ScoreComponent {
+                label: "measured generation throughput".to_string(),
+                value: (tps / 10.0).round() as i64,
+            });
+        }
+        if let Some(tps) = summary.prompt_tokens_per_second {
+            components.push(ScoreComponent {
+                label: "measured prompt-processing throughput".to_string(),
+                value: (tps / 20.0).round() as i64,
+            });
+        }
     }
 
     if worker.queue_depth > 0 {
@@ -470,7 +495,9 @@ mod tests {
             worker_id: WorkerId::from(id),
             healthy: true,
             backend: "llama_cpp".to_string(),
+            backend_version: Some("test-version".to_string()),
             backend_healthy: true,
+            worker_hardware_fingerprint: Some("test-os-test-arch-test-host".to_string()),
             accelerators: vec![AcceleratorKind::Cpu],
             loaded_models: vec![],
             known_models: vec![ModelId::from("big"), ModelId::from("small")],
@@ -480,8 +507,7 @@ mod tests {
             available_memory_bytes: Some(20_000_000_000),
             supports_streaming: true,
             locality: WorkerLocality::Local,
-            measured_generation_tokens_per_second: None,
-            measured_prompt_tokens_per_second: None,
+            benchmarks: BTreeMap::new(),
             priority: 0,
         }
     }
@@ -665,5 +691,66 @@ mod tests {
         let explanation = schedule(&request(), &reg, &[], &SchedulingOverrides::default());
         assert!(explanation.selected.is_none());
         assert!(explanation.all_candidates.is_empty());
+    }
+
+    #[test]
+    fn benchmark_data_for_the_candidate_model_raises_its_score() {
+        let reg = registry();
+        let mut w1 = worker("w1");
+        w1.benchmarks.insert(
+            ModelId::from("big"),
+            BenchmarkSummary {
+                prompt_tokens_per_second: Some(400.0),
+                generation_tokens_per_second: Some(200.0),
+            },
+        );
+        let workers = vec![w1, worker("w2")]; // w2 has identical eligibility, no benchmark data
+        let explanation = schedule(&request(), &reg, &workers, &SchedulingOverrides::default());
+
+        let w1_big = explanation
+            .all_candidates
+            .iter()
+            .find(|c| c.worker_id == WorkerId::from("w1") && c.model_id == ModelId::from("big"))
+            .unwrap();
+        let w2_big = explanation
+            .all_candidates
+            .iter()
+            .find(|c| c.worker_id == WorkerId::from("w2") && c.model_id == ModelId::from("big"))
+            .unwrap();
+        assert!(
+            w1_big.score > w2_big.score,
+            "benchmarked worker should outscore an identical worker with no benchmark data"
+        );
+        assert!(w1_big
+            .score_breakdown
+            .iter()
+            .any(|c| c.label == "measured generation throughput"));
+    }
+
+    #[test]
+    fn benchmark_data_does_not_leak_into_a_different_models_score() {
+        let reg = registry();
+        let mut w1 = worker("w1");
+        // Benchmark data recorded for "small" must not affect scoring "big" on the
+        // same worker - this is exactly the per-model scoping the fingerprint/summary
+        // map exists to guarantee.
+        w1.benchmarks.insert(
+            ModelId::from("small"),
+            BenchmarkSummary {
+                prompt_tokens_per_second: Some(9000.0),
+                generation_tokens_per_second: Some(9000.0),
+            },
+        );
+        let workers = vec![w1];
+        let explanation = schedule(&request(), &reg, &workers, &SchedulingOverrides::default());
+        let big_candidate = explanation
+            .all_candidates
+            .iter()
+            .find(|c| c.model_id == ModelId::from("big"))
+            .unwrap();
+        assert!(!big_candidate
+            .score_breakdown
+            .iter()
+            .any(|c| c.label.contains("throughput")));
     }
 }

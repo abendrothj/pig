@@ -4,8 +4,9 @@
 //! `lao.toml`, else `config/lao.toml`), rather than inventing a parallel convention.
 
 use lao_orchestrator_core::model::{
-    GenerationParameters, MessageRole, ModelId, ModelInvoker, ModelMessage, ModelRegistry,
-    ModelRequest, ModelRequirements, ModelRole, ModelSelector, RequestId, SchedulingOverrides,
+    record_benchmark, BenchmarkFingerprint, BenchmarkRecord, GenerationParameters, MessageRole,
+    ModelId, ModelInvoker, ModelMessage, ModelRegistry, ModelRequest, ModelRequirements, ModelRole,
+    ModelSelector, RequestId, SchedulingOverrides,
 };
 use lao_worker::coordinator::{Coordinator, WorkerEndpointConfig, WorkersConfig};
 use std::collections::BTreeMap;
@@ -540,6 +541,11 @@ pub fn models_benchmark(model_id: String, worker: Option<String>, json: bool) {
     let workers = require_workers();
     let target = resolve_target_worker(&workers, worker.clone());
     let registry = load_registry();
+    let model_id_typed = ModelId::from(model_id.clone());
+    let file_size_bytes = registry
+        .get(&model_id_typed)
+        .and_then(|entry| std::fs::metadata(&entry.path).ok())
+        .map(|meta| meta.len());
     let coordinator = Coordinator::new(vec![target.clone()], registry);
 
     let request = ModelRequest {
@@ -561,21 +567,44 @@ pub fn models_benchmark(model_id: String, worker: Option<String>, json: bool) {
     };
 
     let response = coordinator.invoke(request);
-    let record = serde_json::json!({
-        "model_id": model_id,
-        "worker_id": target.id,
-        "backend": response.execution.backend,
-        "timestamp_unix_ms": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0),
-        "success": response.is_success(),
-        "model_load_ms": response.execution.model_load_ms,
-        "prompt_tokens_per_second": response.execution.prompt_tokens_per_second,
-        "generation_tokens_per_second": response.execution.generation_tokens_per_second,
-        "total_ms": response.execution.total_ms,
-        "prompt_tokens": response.execution.prompt_tokens,
-        "generated_tokens": response.execution.generated_tokens,
-    });
 
-    if let Err(e) = persist_benchmark(&model_id, &record) {
+    let worker_hardware_fingerprint = coordinator
+        .snapshots()
+        .into_iter()
+        .find(|snap| snap.worker_id == response.execution.worker_id)
+        .and_then(|snap| snap.worker_hardware_fingerprint)
+        .unwrap_or_default();
+
+    let fingerprint = BenchmarkFingerprint {
+        model_id: model_id_typed.clone(),
+        model_file_size_bytes: file_size_bytes,
+        model_file_hash: None,
+        backend: response.execution.backend.clone(),
+        backend_version: response.execution.backend_version.clone(),
+        worker_hardware_fingerprint,
+        accelerator: response.execution.accelerator,
+        context_tokens: response.execution.context_tokens,
+        gpu_layers: response.execution.gpu_layers,
+        cpu_threads: response.execution.cpu_threads,
+        batch_size: response.execution.batch_size,
+    };
+    let record = BenchmarkRecord {
+        fingerprint,
+        worker_id: response.execution.worker_id.clone(),
+        timestamp_unix_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+        success: response.is_success(),
+        model_load_ms: response.execution.model_load_ms,
+        prompt_tokens_per_second: response.execution.prompt_tokens_per_second,
+        generation_tokens_per_second: response.execution.generation_tokens_per_second,
+        total_ms: response.execution.total_ms,
+        prompt_tokens: response.execution.prompt_tokens,
+        generated_tokens: response.execution.generated_tokens,
+    };
+
+    if let Err(e) = record_benchmark(&model_id_typed, &record) {
         eprintln!("[WARN] failed to persist benchmark record: {}", e);
     }
 
@@ -601,18 +630,6 @@ pub fn models_benchmark(model_id: String, worker: Option<String>, json: bool) {
     if !response.is_success() {
         std::process::exit(1);
     }
-}
-
-fn persist_benchmark(model_id: &str, record: &serde_json::Value) -> std::io::Result<()> {
-    let dir = std::path::Path::new(".lao_benchmarks");
-    std::fs::create_dir_all(dir)?;
-    let path = dir.join(format!("{}.jsonl", model_id.replace(['/', ' '], "_")));
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
-    writeln!(file, "{}", serde_json::to_string(record)?)?;
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
