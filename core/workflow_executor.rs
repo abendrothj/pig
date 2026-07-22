@@ -3,8 +3,10 @@
 //! Serial vs parallel orchestration share the same step lifecycle; parallel level
 //! scheduling lives in `workflow_parallel` until a dedicated serial backend is needed.
 
-use crate::workflow_parallel::run_workflow_with_options;
+use crate::model::ModelInvoker;
+use crate::workflow_parallel::run_workflow_with_options_and_invoker;
 use crate::workflow_types::{StepEvent, StepLog};
+use std::sync::Arc;
 
 /// Controls how workflows are executed and persisted.
 #[derive(Debug, Clone)]
@@ -30,15 +32,25 @@ impl Default for ExecutionOptions {
 /// Shared workflow runner used by CLI, library, and scheduler paths.
 pub struct WorkflowExecutor {
     options: ExecutionOptions,
+    model_invoker: Option<Arc<dyn ModelInvoker>>,
 }
 
 impl WorkflowExecutor {
     pub fn new(options: ExecutionOptions) -> Self {
-        Self { options }
+        Self {
+            options,
+            model_invoker: None,
+        }
     }
 
     pub fn with_defaults() -> Self {
         Self::new(ExecutionOptions::default())
+    }
+
+    /// Enable `run: local_llm` steps for workflows run through this executor.
+    pub fn with_model_invoker(mut self, invoker: Arc<dyn ModelInvoker>) -> Self {
+        self.model_invoker = Some(invoker);
+        self
     }
 
     pub fn options(&self) -> &ExecutionOptions {
@@ -49,11 +61,12 @@ impl WorkflowExecutor {
     where
         F: FnMut(StepEvent) + Send,
     {
-        run_workflow_with_options(
+        run_workflow_with_options_and_invoker(
             path,
             self.options.parallel,
             self.options.record_state,
             &self.options.state_dir,
+            self.model_invoker.clone(),
             on_event,
         )
     }

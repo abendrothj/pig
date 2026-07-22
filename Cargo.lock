@@ -894,10 +894,12 @@ version = "0.3.0"
 dependencies = [
  "clap",
  "lao-orchestrator-core",
+ "lao-worker",
  "lao_plugin_api",
  "serde",
  "serde_json",
  "serde_yaml",
+ "tokio",
  "tracing-subscriber",
  "uuid",
 ]
