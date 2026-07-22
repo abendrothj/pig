@@ -16,10 +16,9 @@ use lao_orchestrator_core::model::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::sync::{mpsc, RwLock, Semaphore};
+use tokio::sync::{mpsc, OwnedSemaphorePermit, RwLock, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +63,7 @@ pub struct ResolvedGeneration {
     pub execution_config: serde_json::Value,
 }
 
+#[derive(Debug)]
 pub enum QueueError {
     QueueFull,
 }
@@ -80,7 +80,15 @@ pub struct WorkerRuntime {
     jobs: Arc<RwLock<HashMap<JobId, JobRecord>>>,
     running: Arc<RwLock<HashMap<JobId, RunningJob>>>,
     concurrency: Arc<Semaphore>,
-    queued_count: Arc<AtomicUsize>,
+    /// Dedicated admission capacity, independent of `concurrency`. A queue permit is
+    /// reserved atomically at submission time (before the request is accepted) and
+    /// released exactly once, when the job either starts running or leaves the queue
+    /// some other way (cancelled, worker shutting down). Deriving "queue depth" from
+    /// this permit count - rather than a counter incremented/decremented around
+    /// `concurrency`'s own acquire - closes a check-then-act window where two requests
+    /// arriving close together could observe stale capacity and one could be rejected
+    /// even though the worker could have accepted it.
+    queue_slots: Arc<Semaphore>,
     max_queued: usize,
     default_timeout: Duration,
 }
@@ -103,7 +111,7 @@ impl WorkerRuntime {
             jobs: Arc::new(RwLock::new(HashMap::new())),
             running: Arc::new(RwLock::new(HashMap::new())),
             concurrency: Arc::new(Semaphore::new(max_concurrent_jobs.max(1))),
-            queued_count: Arc::new(AtomicUsize::new(0)),
+            queue_slots: Arc::new(Semaphore::new(max_queued_jobs)),
             max_queued: max_queued_jobs,
             default_timeout,
         }
@@ -123,8 +131,12 @@ impl WorkerRuntime {
         jobs
     }
 
+    /// Jobs currently holding a queue permit - i.e. admitted but not yet running.
+    /// A running job has already released its queue slot (see `run_job`), so this
+    /// never counts jobs that are actively executing.
     pub fn queue_depth(&self) -> usize {
-        self.queued_count.load(Ordering::SeqCst)
+        self.max_queued
+            .saturating_sub(self.queue_slots.available_permits())
     }
 
     pub async fn active_jobs(&self) -> usize {
@@ -139,16 +151,22 @@ impl WorkerRuntime {
     /// Submit a generation request. Returns the job id and a stream of token events
     /// immediately; the caller polls `job()` for the final `JobRecord`/`ModelResponse`.
     /// Rejects outright when the bounded queue is full rather than growing it.
+    ///
+    /// Admission is a single atomic `try_acquire_owned` on `queue_slots`: there is no
+    /// separate check followed by a separate increment, so two calls racing for the
+    /// last slot can never both succeed, and neither can observe a state where the
+    /// slot looks free only because another admitted job hasn't yet been accounted
+    /// for.
     pub async fn submit(
         &self,
         request: ModelRequest,
         resolved: ResolvedGeneration,
         timeout_override: Option<Duration>,
     ) -> Result<(JobId, mpsc::Receiver<ModelStreamEvent>), QueueError> {
-        if self.queued_count.load(Ordering::SeqCst) >= self.max_queued {
-            return Err(QueueError::QueueFull);
-        }
-        self.queued_count.fetch_add(1, Ordering::SeqCst);
+        let queue_permit = match self.queue_slots.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => return Err(QueueError::QueueFull),
+        };
 
         let job_id = JobId::generate();
         let record = JobRecord {
@@ -182,7 +200,6 @@ impl WorkerRuntime {
             jobs: self.jobs.clone(),
             running: self.running.clone(),
             concurrency: self.concurrency.clone(),
-            queued_count: self.queued_count.clone(),
         };
 
         tokio::spawn(run_job(
@@ -192,6 +209,7 @@ impl WorkerRuntime {
             cancellation,
             event_tx,
             timeout,
+            queue_permit,
         ));
 
         Ok((job_id, event_rx))
@@ -216,7 +234,6 @@ struct JobContext {
     jobs: Arc<RwLock<HashMap<JobId, JobRecord>>>,
     running: Arc<RwLock<HashMap<JobId, RunningJob>>>,
     concurrency: Arc<Semaphore>,
-    queued_count: Arc<AtomicUsize>,
 }
 
 async fn set_status(jobs: &RwLock<HashMap<JobId, JobRecord>>, id: &JobId, status: JobStatus) {
@@ -291,6 +308,7 @@ async fn run_job(
     cancellation: CancellationToken,
     event_tx: mpsc::Sender<ModelStreamEvent>,
     timeout: Duration,
+    queue_permit: OwnedSemaphorePermit,
 ) {
     let queue_start = Instant::now();
 
@@ -298,11 +316,14 @@ async fn run_job(
         p = ctx.concurrency.clone().acquire_owned() => {
             match p {
                 Ok(p) => p,
-                Err(_) => return, // semaphore closed: worker is shutting down
+                // Semaphore closed: worker is shutting down. `queue_permit` is
+                // dropped here, releasing the queue slot.
+                Err(_) => return,
             }
         }
         _ = cancellation.cancelled() => {
-            ctx.queued_count.fetch_sub(1, Ordering::SeqCst);
+            // `queue_permit` is dropped at the end of this arm, releasing the queue
+            // slot for a job that never got to run.
             let queue_wait_ms = queue_start.elapsed().as_millis() as u64;
             let mut metadata = base_metadata(&ctx, &resolved, queue_wait_ms);
             metadata.total_ms = queue_wait_ms;
@@ -321,7 +342,11 @@ async fn run_job(
             return;
         }
     };
-    ctx.queued_count.fetch_sub(1, Ordering::SeqCst);
+    // The job is now actually running: release the queue slot so a new request can
+    // be admitted into it. This is the one explicit drop; every other exit path
+    // above returns without it, letting the compiler-guaranteed destructor release
+    // the slot instead (also covers task abort and panics during the select).
+    drop(queue_permit);
     let queue_wait_ms = queue_start.elapsed().as_millis() as u64;
 
     set_status(&ctx.jobs, &ctx.job_id, JobStatus::Loading).await;
@@ -540,6 +565,22 @@ mod tests {
         panic!("job {} did not reach a terminal state in time", id);
     }
 
+    /// Poll `active_jobs()` until it matches `expected`, bounded so a regression
+    /// hangs the test instead of the whole suite.
+    async fn wait_for_active_jobs(rt: &WorkerRuntime, expected: usize) {
+        for _ in 0..500 {
+            if rt.active_jobs().await == expected {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+        panic!(
+            "active_jobs never reached {} within timeout (last observed {})",
+            expected,
+            rt.active_jobs().await
+        );
+    }
+
     #[tokio::test]
     async fn successful_generation_produces_a_response_with_metadata() {
         let rt = runtime(1, 4);
@@ -651,6 +692,261 @@ mod tests {
         assert!(first.is_ok());
         let second = rt.submit(req, resolved("m1"), None).await;
         assert!(matches!(second, Err(QueueError::QueueFull)));
+    }
+
+    #[tokio::test]
+    async fn queue_capacity_zero_rejects_waiting_jobs() {
+        // A queue permit is reserved unconditionally at admission time, before it's
+        // known whether an execution slot happens to be free - so zero queue
+        // capacity rejects every submission outright, even one that could have run
+        // immediately. This preserves the pre-existing max_queued=0 semantics under
+        // the new atomic-permit implementation.
+        let rt = runtime(1, 0);
+        let result = rt.submit(request("hi"), resolved("m1"), None).await;
+        assert!(matches!(result, Err(QueueError::QueueFull)));
+    }
+
+    #[tokio::test]
+    async fn running_job_does_not_consume_queue_slot() {
+        let backend = Arc::new(crate::backend::fake::FakeBackend::with_token_delay(
+            Duration::from_millis(200),
+        ));
+        let rt = WorkerRuntime::new(
+            "w".to_string(),
+            "h".to_string(),
+            backend,
+            "fake".to_string(),
+            1,
+            1,
+            Duration::from_secs(5),
+        );
+        let mut req = request("one two three");
+        req.parameters.max_tokens = Some(20);
+        let (_id, _events) = rt.submit(req.clone(), resolved("m1"), None).await.unwrap();
+        wait_for_active_jobs(&rt, 1).await;
+        assert_eq!(
+            rt.queue_depth(),
+            0,
+            "a running job must not occupy a queue slot"
+        );
+        // The single queue slot must still be fully available for a new submission.
+        let second = rt.submit(req, resolved("m1"), None).await;
+        assert!(second.is_ok());
+    }
+
+    #[tokio::test]
+    async fn queued_job_releases_slot_when_started() {
+        let backend = Arc::new(crate::backend::fake::FakeBackend::with_token_delay(
+            Duration::from_millis(20),
+        ));
+        let rt = WorkerRuntime::new(
+            "w".to_string(),
+            "h".to_string(),
+            backend,
+            "fake".to_string(),
+            1,
+            1,
+            Duration::from_secs(5),
+        );
+        let mut req = request("one two three");
+        req.parameters.max_tokens = Some(3);
+        let (first_id, _e1) = rt.submit(req.clone(), resolved("m1"), None).await.unwrap();
+        wait_for_active_jobs(&rt, 1).await;
+        let (second_id, _e2) = rt.submit(req, resolved("m1"), None).await.unwrap();
+        assert_eq!(rt.queue_depth(), 1, "second job should be sitting queued");
+
+        wait_for_terminal(&rt, &first_id).await;
+        wait_for_terminal(&rt, &second_id).await;
+        assert_eq!(
+            rt.queue_depth(),
+            0,
+            "queue slot must be released once the queued job started running"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_queued_job_releases_slot() {
+        let backend = Arc::new(crate::backend::fake::FakeBackend::with_token_delay(
+            Duration::from_millis(300),
+        ));
+        let rt = WorkerRuntime::new(
+            "w".to_string(),
+            "h".to_string(),
+            backend,
+            "fake".to_string(),
+            1,
+            1,
+            Duration::from_secs(5),
+        );
+        let mut blocker = request("one two three");
+        blocker.parameters.max_tokens = Some(50); // long-running: keeps the execution slot busy
+        rt.submit(blocker, resolved("m1"), None).await.unwrap();
+        wait_for_active_jobs(&rt, 1).await;
+
+        let (second_id, _events) = rt
+            .submit(request("hi"), resolved("m1"), None)
+            .await
+            .unwrap();
+        assert_eq!(rt.queue_depth(), 1);
+
+        assert!(rt.cancel(&second_id).await);
+        let record = wait_for_terminal(&rt, &second_id).await;
+        assert_eq!(record.status, JobStatus::Cancelled);
+        assert_eq!(
+            rt.queue_depth(),
+            0,
+            "cancelling a queued job must release its queue slot"
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_admission_never_exceeds_capacity() {
+        let backend = Arc::new(crate::backend::fake::FakeBackend::with_token_delay(
+            Duration::from_millis(300),
+        ));
+        let max_concurrent = 1;
+        let max_queued = 3;
+        let rt = Arc::new(WorkerRuntime::new(
+            "w".to_string(),
+            "h".to_string(),
+            backend,
+            "fake".to_string(),
+            max_concurrent,
+            max_queued,
+            Duration::from_secs(5),
+        ));
+
+        // Occupy the only execution slot with a long-running job so nothing admitted
+        // during the burst below can transition out of "queued" mid-test - isolates
+        // the admission race from execution-slot timing entirely.
+        let mut blocker = request("one two three");
+        blocker.parameters.max_tokens = Some(50);
+        rt.submit(blocker, resolved("m1"), None).await.unwrap();
+        wait_for_active_jobs(&rt, 1).await;
+
+        let n = max_queued + 5;
+        let barrier = Arc::new(tokio::sync::Barrier::new(n));
+        let mut handles = Vec::with_capacity(n);
+        for _ in 0..n {
+            let rt = rt.clone();
+            let barrier = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                rt.submit(request("hi"), resolved("m1"), None).await.is_ok()
+            }));
+        }
+        let mut accepted = 0;
+        for h in handles {
+            if h.await.unwrap() {
+                accepted += 1;
+            }
+        }
+        assert_eq!(
+            accepted, max_queued,
+            "admission under concurrent contention must accept exactly the queue capacity, never more"
+        );
+    }
+
+    #[tokio::test]
+    async fn exactly_capacity_requests_are_accepted() {
+        let backend = Arc::new(crate::backend::fake::FakeBackend::with_token_delay(
+            Duration::from_millis(300),
+        ));
+        let max_queued = 4;
+        let rt = WorkerRuntime::new(
+            "w".to_string(),
+            "h".to_string(),
+            backend,
+            "fake".to_string(),
+            1,
+            max_queued,
+            Duration::from_secs(5),
+        );
+        let mut blocker = request("one two three");
+        blocker.parameters.max_tokens = Some(50);
+        rt.submit(blocker, resolved("m1"), None).await.unwrap();
+        wait_for_active_jobs(&rt, 1).await;
+
+        for i in 0..max_queued {
+            let result = rt.submit(request("hi"), resolved("m1"), None).await;
+            assert!(
+                result.is_ok(),
+                "submission {} within capacity should be accepted",
+                i
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn capacity_plus_one_returns_429() {
+        // job.rs deals in QueueError::QueueFull; the HTTP layer (worker/server.rs)
+        // maps this 1:1 onto a 429 response - see queue_overflow_returns_429 in
+        // worker/tests/http_server_test.rs for the end-to-end version.
+        let backend = Arc::new(crate::backend::fake::FakeBackend::with_token_delay(
+            Duration::from_millis(300),
+        ));
+        let max_queued = 2;
+        let rt = WorkerRuntime::new(
+            "w".to_string(),
+            "h".to_string(),
+            backend,
+            "fake".to_string(),
+            1,
+            max_queued,
+            Duration::from_secs(5),
+        );
+        let mut blocker = request("one two three");
+        blocker.parameters.max_tokens = Some(50);
+        rt.submit(blocker, resolved("m1"), None).await.unwrap();
+        wait_for_active_jobs(&rt, 1).await;
+
+        for _ in 0..max_queued {
+            assert!(rt.submit(request("hi"), resolved("m1"), None).await.is_ok());
+        }
+        let overflow = rt.submit(request("hi"), resolved("m1"), None).await;
+        assert!(matches!(overflow, Err(QueueError::QueueFull)));
+    }
+
+    #[tokio::test]
+    async fn repeated_contention_test_has_no_spurious_429() {
+        // Exactly `max_queued` concurrent submissions released together via a
+        // barrier (not a sleep) must all succeed - total demand never exceeds
+        // supply, so a spurious rejection here can only mean the admission check
+        // is racy. Repeated many times to build real confidence, the same way the
+        // original queue_overflow_returns_429 flakiness only showed up under
+        // repetition.
+        for iteration in 0..40 {
+            let backend = Arc::new(crate::backend::fake::FakeBackend::with_token_delay(
+                Duration::from_millis(50),
+            ));
+            let max_queued = 4;
+            let rt = Arc::new(WorkerRuntime::new(
+                "w".to_string(),
+                "h".to_string(),
+                backend,
+                "fake".to_string(),
+                1,
+                max_queued,
+                Duration::from_secs(5),
+            ));
+            let barrier = Arc::new(tokio::sync::Barrier::new(max_queued));
+            let mut handles = Vec::with_capacity(max_queued);
+            for _ in 0..max_queued {
+                let rt = rt.clone();
+                let barrier = barrier.clone();
+                handles.push(tokio::spawn(async move {
+                    barrier.wait().await;
+                    rt.submit(request("hi"), resolved("m1"), None).await.is_ok()
+                }));
+            }
+            for h in handles {
+                assert!(
+                    h.await.unwrap(),
+                    "iteration {}: exactly-capacity concurrent submissions must never be spuriously rejected",
+                    iteration
+                );
+            }
+        }
     }
 
     #[tokio::test]
