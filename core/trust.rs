@@ -21,6 +21,8 @@ pub enum CapabilityClass {
     Shell,
     Network,
     Subprocess,
+    /// Read-only access to the structural code graph via a `CodeIntelligenceProvider`.
+    CodeGraphRead,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -31,6 +33,7 @@ pub struct TrustPolicy {
     pub allow_shell: bool,
     pub allow_network: bool,
     pub allow_subprocess: bool,
+    pub allow_code_graph_read: bool,
     pub allow_plugins: HashSet<String>,
     /// Explicit filesystem roots (required for any filesystem capability).
     pub filesystem_roots: Vec<PathBuf>,
@@ -46,6 +49,7 @@ struct TrustTomlSection {
     allow_shell: Option<bool>,
     allow_network: Option<bool>,
     allow_subprocess: Option<bool>,
+    allow_code_graph_read: Option<bool>,
     allow_plugins: Option<Vec<String>>,
     filesystem_roots: Option<Vec<String>>,
     network_endpoints: Option<Vec<String>>,
@@ -113,6 +117,9 @@ impl TrustPolicy {
             if let Some(v) = trust.allow_subprocess {
                 self.allow_subprocess = v;
             }
+            if let Some(v) = trust.allow_code_graph_read {
+                self.allow_code_graph_read = v;
+            }
             if let Some(plugins) = trust.allow_plugins {
                 self.allow_plugins.extend(plugins);
             }
@@ -146,6 +153,7 @@ impl TrustPolicy {
             CapabilityClass::Shell => self.allow_shell,
             CapabilityClass::Network => self.allow_network,
             CapabilityClass::Subprocess => self.allow_subprocess,
+            CapabilityClass::CodeGraphRead => self.allow_code_graph_read,
         }
     }
 
@@ -307,7 +315,10 @@ impl TrustPolicy {
 /// Map a declared manifest capability name to a trust capability class.
 /// Accepts both the bundled plugins' functional names and canonical class names so
 /// external plugins can declare either form.
-fn capability_class_for_manifest(capability_name: &str) -> Option<CapabilityClass> {
+/// Map a declared manifest capability name to a trust capability class. `pub(crate)` so
+/// `execution::descriptor::synthetic_descriptor` can reuse the same table instead of
+/// duplicating it.
+pub(crate) fn capability_class_for_manifest(capability_name: &str) -> Option<CapabilityClass> {
     match capability_name {
         "read-file" | "file-read" | "file_read" | "filesystem_read" => {
             Some(CapabilityClass::FilesystemRead)
@@ -323,6 +334,9 @@ fn capability_class_for_manifest(capability_name: &str) -> Option<CapabilityClas
         "run-shell" | "shell" | "shell-command" | "shell_execute" => Some(CapabilityClass::Shell),
         "summarize" | "prompt-dispatch" | "network" | "http" => Some(CapabilityClass::Network),
         "speech-to-text" | "subprocess" => Some(CapabilityClass::Subprocess),
+        "code-graph-read" | "code_graph_read" | "codegraph-read" => {
+            Some(CapabilityClass::CodeGraphRead)
+        }
         _ => None,
     }
 }
@@ -349,6 +363,19 @@ mod tests {
         assert!(!policy.allows_plugin("ShellCommandPlugin", CapabilityClass::Shell));
         assert!(!policy.allows_plugin("FileReadPlugin", CapabilityClass::FilesystemRead));
         assert!(!policy.allows_plugin("SummarizerPlugin", CapabilityClass::Network));
+        assert!(!policy.allows_class(CapabilityClass::CodeGraphRead));
+    }
+
+    #[test]
+    fn code_graph_read_capability_name_maps_and_is_deny_by_default() {
+        assert_eq!(
+            capability_class_for_manifest("code-graph-read"),
+            Some(CapabilityClass::CodeGraphRead)
+        );
+        let mut policy = TrustPolicy::default();
+        assert!(!policy.allows_class(CapabilityClass::CodeGraphRead));
+        policy.allow_code_graph_read = true;
+        assert!(policy.allows_class(CapabilityClass::CodeGraphRead));
     }
 
     #[test]

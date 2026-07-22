@@ -9,8 +9,12 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
-use std::{env as std_env, fs, thread, time::Duration};
+use std::{
+    env as std_env, fs, thread,
+    time::{Duration, Instant},
+};
 
+use crate::execution::{legacy_adapter, StepMetadata};
 use crate::plugin_result::PluginRunResult;
 use crate::plugins::PluginRegistry;
 use crate::trust::TrustPolicy;
@@ -320,6 +324,7 @@ impl StepExecutor {
                 error: None,
             });
 
+            let attempt_start = Instant::now();
             let run_result: PluginRunResult = {
                 if let Err(e) = self.trust.validate_step_input(&plugin_name, &input_text) {
                     PluginRunResult::runtime_error(e)
@@ -339,8 +344,23 @@ impl StepExecutor {
                 }
             };
 
-            if run_result.is_success() {
-                let output_str = run_result.output.unwrap_or_default();
+            // Adapt the plugin's ABI-derived outcome into the structured StepResult
+            // model. This is purely additive: `step_result`'s success/failure and
+            // output/error strings are derived identically to the legacy `run_result`
+            // values they replace below, so observable behavior is unchanged.
+            let step_result = legacy_adapter::adapt(
+                run_result,
+                StepMetadata {
+                    plugin_name: plugin_name.clone(),
+                    plugin_version: Some(plugin_version.clone()),
+                    attempt,
+                    duration_ms: attempt_start.elapsed().as_millis() as u64,
+                    cache_hit: false,
+                },
+            );
+
+            if step_result.is_success() {
+                let output_str = step_result.primary_output_text().unwrap_or_default();
                 self.outputs
                     .lock()
                     .expect("outputs mutex poisoned")
@@ -383,7 +403,7 @@ impl StepExecutor {
                 });
                 return;
             } else {
-                let output_str = run_result.display_error();
+                let output_str = step_result.display_error();
                 last_error = Some(output_str.clone());
                 let _ = event_tx.send(StepEvent {
                     step: step_idx,
