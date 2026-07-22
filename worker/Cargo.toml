@@ -10,6 +10,15 @@ license.workspace = true
 name = "lao_worker"
 path = "lib.rs"
 
+# Test-only fixture: a fake llama-server executable used by
+# llama_cpp_fixture_test.rs to exercise LlamaCppBackend against a real child process
+# without depending on a real llama.cpp install or GGUF model.
+[[bin]]
+name = "fake_llama_server"
+path = "tests/fixtures/fake_llama_server.rs"
+test = false
+doc = false
+
 [dependencies]
 lao-orchestrator-core = { path = "../core" }
 async-trait = "0.1"
