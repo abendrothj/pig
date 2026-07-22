@@ -201,13 +201,18 @@ impl Coordinator {
         }
     }
 
+    /// Health/capability snapshot of every configured worker, independent of any
+    /// specific request - used by `workers list`/`workers health`.
+    pub fn snapshots(&self) -> Vec<WorkerSnapshot> {
+        self.workers.iter().map(|w| self.snapshot(w)).collect()
+    }
+
     pub fn route(
         &self,
         request: &ModelRequest,
         overrides: &SchedulingOverrides,
     ) -> RoutingExplanation {
-        let snapshots: Vec<WorkerSnapshot> =
-            self.workers.iter().map(|w| self.snapshot(w)).collect();
+        let snapshots = self.snapshots();
         schedule(request, &self.registry, &snapshots, overrides)
     }
 

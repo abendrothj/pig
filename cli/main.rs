@@ -1,3 +1,5 @@
+mod model_commands;
+
 use clap::{Parser, Subcommand};
 use lao_orchestrator_core::{
     code_intelligence::{
@@ -135,6 +137,161 @@ enum Commands {
         args: String,
         #[arg(long, help = "Emit machine-readable JSON output")]
         json: bool,
+    },
+    /// Worker daemon control
+    Worker {
+        #[command(subcommand)]
+        action: WorkerAction,
+    },
+    /// Inspect configured workers
+    Workers {
+        #[command(subcommand)]
+        action: WorkersAction,
+    },
+    /// Model registry and generation
+    Models {
+        #[command(subcommand)]
+        action: ModelsAction,
+    },
+    /// Routing
+    Route {
+        #[command(subcommand)]
+        action: RouteAction,
+    },
+    /// Job management
+    Jobs {
+        #[command(subcommand)]
+        action: JobsAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum WorkerAction {
+    /// Start the worker daemon (blocks until shutdown)
+    Serve {
+        #[arg(long, help = "Path to lao.toml (default: ./lao.toml)")]
+        config: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum WorkersAction {
+    /// List configured workers and their health
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect one worker's full capability snapshot
+    Inspect {
+        worker_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Health-check all configured workers (non-zero exit if any is unhealthy)
+    Health {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ModelsAction {
+    /// List models declared in [models.entries]
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect one model entry
+    Inspect {
+        model_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Scan a directory for GGUF files (does not modify configuration)
+    Discover {
+        #[arg(long)]
+        directory: String,
+    },
+    /// Load a model on a worker
+    Load {
+        model_id: String,
+        #[arg(long)]
+        worker: Option<String>,
+    },
+    /// Unload a model from a worker
+    Unload {
+        model_id: String,
+        #[arg(long)]
+        worker: Option<String>,
+    },
+    /// Run a direct generation request
+    Generate {
+        #[arg(long, help = "Model role, e.g. reasoning, coding")]
+        role: Option<String>,
+        #[arg(long, help = "Direct model id/alias, overrides --role resolution")]
+        model: Option<String>,
+        #[arg(long)]
+        prompt: String,
+        #[arg(long)]
+        system: Option<String>,
+        #[arg(long)]
+        max_tokens: Option<u32>,
+        #[arg(long)]
+        temperature: Option<f32>,
+        #[arg(long, help = "Emit the full structured ModelResponse as JSON")]
+        json: bool,
+        #[arg(long, help = "Stream tokens as they are generated (interactive use)")]
+        stream: bool,
+        #[arg(long)]
+        force_worker: Option<String>,
+        #[arg(long)]
+        force_cpu: bool,
+    },
+    /// Run a short benchmark prompt against a model and record the result
+    Benchmark {
+        model_id: String,
+        #[arg(long)]
+        worker: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum RouteAction {
+    /// Show which worker/model would be selected for a request, and why
+    Explain {
+        #[arg(long)]
+        role: Option<String>,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum JobsAction {
+    /// List jobs known to a worker
+    List {
+        #[arg(long)]
+        worker: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect one job
+    Inspect {
+        job_id: String,
+        #[arg(long)]
+        worker: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Cancel a running or queued job
+    Cancel {
+        job_id: String,
+        #[arg(long)]
+        worker: String,
     },
 }
 
@@ -808,5 +965,70 @@ fn main() {
                 }
             }
         }
+        Commands::Worker { action } => match action {
+            WorkerAction::Serve { config } => model_commands::worker_serve(config),
+        },
+        Commands::Workers { action } => match action {
+            WorkersAction::List { json } => model_commands::workers_list(json),
+            WorkersAction::Inspect { worker_id, json } => {
+                model_commands::workers_inspect(worker_id, json)
+            }
+            WorkersAction::Health { json } => model_commands::workers_health(json),
+        },
+        Commands::Models { action } => match action {
+            ModelsAction::List { json } => model_commands::models_list(json),
+            ModelsAction::Inspect { model_id, json } => {
+                model_commands::models_inspect(model_id, json)
+            }
+            ModelsAction::Discover { directory } => model_commands::models_discover(directory),
+            ModelsAction::Load { model_id, worker } => {
+                model_commands::models_load(model_id, worker)
+            }
+            ModelsAction::Unload { model_id, worker } => {
+                model_commands::models_unload(model_id, worker)
+            }
+            ModelsAction::Generate {
+                role,
+                model,
+                prompt,
+                system,
+                max_tokens,
+                temperature,
+                json,
+                stream,
+                force_worker,
+                force_cpu,
+            } => model_commands::models_generate(
+                role,
+                model,
+                prompt,
+                system,
+                max_tokens,
+                temperature,
+                json,
+                stream,
+                force_worker,
+                force_cpu,
+            ),
+            ModelsAction::Benchmark {
+                model_id,
+                worker,
+                json,
+            } => model_commands::models_benchmark(model_id, worker, json),
+        },
+        Commands::Route { action } => match action {
+            RouteAction::Explain { role, model, json } => {
+                model_commands::route_explain(role, model, json)
+            }
+        },
+        Commands::Jobs { action } => match action {
+            JobsAction::List { worker, json } => model_commands::jobs_list(worker, json),
+            JobsAction::Inspect {
+                job_id,
+                worker,
+                json,
+            } => model_commands::jobs_inspect(job_id, worker, json),
+            JobsAction::Cancel { job_id, worker } => model_commands::jobs_cancel(job_id, worker),
+        },
     }
 }
