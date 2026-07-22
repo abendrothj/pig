@@ -1,0 +1,14 @@
+workflow: "V2 Fan Out"
+schema_version: 2
+steps:
+  - id: branch_a
+    run: EchoPlugin
+    input: "Branch A"
+  - id: branch_b
+    run: EchoPlugin
+    input: "Branch B"
+  - id: merge
+    run: EchoPlugin
+    input_from:
+      step: branch_a
+    depends_on: [branch_a, branch_b]

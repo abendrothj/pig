@@ -1,0 +1,16 @@
+workflow: "V2 Condition"
+schema_version: 2
+steps:
+  - id: trigger
+    run: EchoPlugin
+    input: "trigger"
+  - id: follow_up
+    run: EchoPlugin
+    input_from:
+      step: trigger
+    depends_on: [trigger]
+    condition:
+      condition_type: OutputContains
+      field: output
+      operator: Contains
+      value: "trigger"

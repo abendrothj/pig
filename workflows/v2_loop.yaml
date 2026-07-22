@@ -1,0 +1,9 @@
+workflow: "V2 Loop"
+schema_version: 2
+steps:
+  - id: process_items
+    run: EchoPlugin
+    for_each:
+      items: ["a", "b", "c"]
+      var: item
+      max_parallel: 2

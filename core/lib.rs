@@ -19,6 +19,7 @@ pub mod workflow_exec;
 pub mod workflow_helpers;
 pub mod workflow_parallel;
 pub mod workflow_types;
+pub mod workflow_v2;
 
 // Re-export public API to preserve backward compatibility
 pub use workflow_dag::*;

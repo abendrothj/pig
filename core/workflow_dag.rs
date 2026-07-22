@@ -8,9 +8,34 @@ use crate::workflow_types::*;
 
 pub fn load_workflow_yaml(path: &str) -> Result<Workflow, String> {
     let yaml_str = fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let workflow = serde_yaml::from_str::<Workflow>(&yaml_str).map_err(|e| e.to_string())?;
+    let workflow = parse_workflow_yaml(&yaml_str)?;
     validate_workflow_schema(&workflow)?;
     Ok(workflow)
+}
+
+/// Parse workflow YAML text, dispatching on `schema_version` (absent or `1` => the
+/// original schema; `2` => `crate::workflow_v2`, normalized into the same `Workflow`
+/// shape). Split out from `load_workflow_yaml` so normalization can be unit tested
+/// without file I/O.
+pub fn parse_workflow_yaml(yaml_str: &str) -> Result<Workflow, String> {
+    #[derive(serde::Deserialize)]
+    struct SchemaVersionProbe {
+        #[serde(default)]
+        schema_version: Option<u32>,
+    }
+    let probe: SchemaVersionProbe = serde_yaml::from_str(yaml_str).map_err(|e| e.to_string())?;
+    match probe.schema_version {
+        None | Some(1) => serde_yaml::from_str::<Workflow>(yaml_str).map_err(|e| e.to_string()),
+        Some(2) => {
+            let v2 = serde_yaml::from_str::<crate::workflow_v2::WorkflowV2>(yaml_str)
+                .map_err(|e| e.to_string())?;
+            crate::workflow_v2::normalize_v2(v2)
+        }
+        Some(other) => Err(format!(
+            "unsupported workflow schema_version {} (supported: 1, 2)",
+            other
+        )),
+    }
 }
 
 pub fn validate_workflow_schema(workflow: &Workflow) -> Result<(), String> {

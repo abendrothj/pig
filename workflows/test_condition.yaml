@@ -1,0 +1,12 @@
+workflow: "Condition Test Workflow"
+steps:
+  - run: EchoPlugin
+    input: "trigger"
+  - run: EchoPlugin
+    input_from: step1
+    depends_on: [step1]
+    condition:
+      condition_type: OutputContains
+      field: output
+      operator: Contains
+      value: "trigger"
