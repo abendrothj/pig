@@ -240,6 +240,41 @@ async fn cancel_stops_a_running_job() {
     assert_eq!(body["status"], "cancelled");
 }
 
+/// Poll `/v1/health` until `predicate(active_jobs, queued_jobs)` holds, or panic with
+/// the last-observed counts once `timeout` elapses. Used instead of a fixed sleep so
+/// tests prove the server has actually reached the state they assert on.
+async fn wait_for_queue_state(
+    client: &reqwest::Client,
+    base: &str,
+    timeout: Duration,
+    predicate: impl Fn(usize, usize) -> bool,
+) {
+    let last_seen = std::sync::Mutex::new((0usize, 0usize));
+    let poll = async {
+        loop {
+            if let Ok(resp) = client.get(format!("{}/v1/health", base)).send().await {
+                if let Ok(body) = resp.json::<serde_json::Value>().await {
+                    let active = body["active_jobs"].as_u64().unwrap_or(0) as usize;
+                    let queued = body["queued_jobs"].as_u64().unwrap_or(0) as usize;
+                    *last_seen.lock().unwrap() = (active, queued);
+                    if predicate(active, queued) {
+                        return;
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    };
+    if tokio::time::timeout(timeout, poll).await.is_err() {
+        let (active, queued) = *last_seen.lock().unwrap();
+        panic!(
+            "queue never reached the expected state within {:?}; \
+             last observed active_jobs={} queued_jobs={}",
+            timeout, active, queued
+        );
+    }
+}
+
 #[tokio::test]
 async fn queue_overflow_returns_429() {
     let (base, _state) = spawn_test_server(1, 1, Some(Duration::from_millis(100)), None).await;
@@ -262,9 +297,28 @@ async fn queue_overflow_returns_429() {
         }
     };
 
+    // Submit the first job and wait for confirmation that it is actually running
+    // (not merely queued) before submitting the second. Firing both "at once" via
+    // two racing spawned tasks left a narrow but real TOCTOU window in the server's
+    // admission check (`worker/job.rs::submit`): a job counts toward `queued_jobs`
+    // from the moment it's admitted until it acquires its concurrency-semaphore
+    // permit, and for an uncontended first job that window can close before a truly
+    // concurrent second request reaches the same check — occasionally rejecting it
+    // outright instead of queueing it. Waiting for confirmed-active here guarantees
+    // the first job has already released that transient slot, so the second
+    // request's admission is deterministic.
     let _first = tokio::spawn(gen_request(base.clone()));
+    wait_for_queue_state(&client, &base, Duration::from_secs(5), |active, _queued| {
+        active == 1
+    })
+    .await;
+
     let _second = tokio::spawn(gen_request(base.clone()));
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    wait_for_queue_state(&client, &base, Duration::from_secs(5), |active, queued| {
+        active == 1 && queued == 1
+    })
+    .await;
+
     let third = client
         .post(format!("{}/v1/generate", base))
         .json(&serde_json::json!({
@@ -277,7 +331,11 @@ async fn queue_overflow_returns_429() {
         .send()
         .await
         .unwrap();
-    assert_eq!(third.status(), 429);
+    assert_eq!(
+        third.status(),
+        429,
+        "expected the third request to be rejected once the active job and the one queue slot are both occupied"
+    );
 }
 
 #[tokio::test]
