@@ -62,7 +62,7 @@ impl JobId {
 // Request
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelRole {
     Reasoning,
@@ -73,6 +73,26 @@ pub enum ModelRole {
     Reranking,
     Verification,
     Custom(String),
+}
+
+impl ModelRole {
+    /// Parse a role name from configuration/YAML text. Unrecognized names become
+    /// `Custom` rather than an error, so role vocabularies can grow without a schema
+    /// change — the trade-off is that a typo silently becomes a new custom role
+    /// instead of a validation error; callers matching against a known role set (the
+    /// registry's `[models.roles.*]` tables) still catch that via "no candidates".
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "reasoning" => Self::Reasoning,
+            "coding" => Self::Coding,
+            "summarization" => Self::Summarization,
+            "extraction" => Self::Extraction,
+            "embedding" => Self::Embedding,
+            "reranking" => Self::Reranking,
+            "verification" => Self::Verification,
+            other => Self::Custom(other.to_string()),
+        }
+    }
 }
 
 impl fmt::Display for ModelRole {

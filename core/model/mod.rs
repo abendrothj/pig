@@ -5,6 +5,12 @@
 //! server, job queueing) lives in the separate `lao-worker` crate — LAO's core process
 //! never links a model runtime directly.
 
+pub mod invoker;
+pub mod registry;
 pub mod types;
 
+pub use invoker::ModelInvoker;
+pub use registry::{
+    discover_gguf_files, ModelEntry, ModelRegistry, RegistryError, ResolvedModelEntry,
+};
 pub use types::*;

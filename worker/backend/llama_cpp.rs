@@ -1,0 +1,618 @@
+//! Supervises `llama-server` as a subprocess and talks to its OpenAI-compatible HTTP
+//! API. LAO never links llama.cpp into its own process — this backend launches the
+//! real executable directly (never a shell), waits for it to report ready, and
+//! forwards generation requests to it.
+//!
+//! One `llama-server` process is supervised at a time per backend instance: loading a
+//! different model stops the previous server and starts a new one. Running several
+//! models concurrently is a job for several workers (see the scheduler), not several
+//! servers behind one backend — this keeps process ownership unambiguous ("one
+//! authoritative owner for each child process").
+
+use super::{
+    BackendCapabilities, BackendError, BackendGenerationRequest, BackendGenerationResponse,
+    BackendHealth, LoadModelRequest, LoadedModel, ModelAvailability, ModelBackend,
+    ModelEventSender, ModelStreamEvent,
+};
+use async_trait::async_trait;
+use futures::StreamExt;
+use lao_orchestrator_core::model::{AcceleratorKind, FinishReason, MessageRole, ModelId};
+use serde::{Deserialize, Serialize};
+use std::io::ErrorKind;
+use std::net::TcpListener;
+use std::path::PathBuf;
+use std::process::Stdio;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::{Child, Command};
+use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
+
+const STDERR_CAP_BYTES: usize = 64 * 1024;
+const HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(200);
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LlamaCppExecutionConfig {
+    pub context_size: Option<u32>,
+    pub cpu_threads: Option<u32>,
+    pub cpu_threads_batch: Option<u32>,
+    pub gpu_layers: Option<i32>,
+    pub batch_size: Option<u32>,
+    pub micro_batch_size: Option<u32>,
+    pub flash_attention: Option<bool>,
+    pub mmap: Option<bool>,
+    pub mlock: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LlamaCppConfig {
+    pub server_executable: PathBuf,
+    pub host: String,
+    pub startup_timeout: Duration,
+    pub request_timeout: Duration,
+}
+
+impl Default for LlamaCppConfig {
+    fn default() -> Self {
+        Self {
+            server_executable: PathBuf::from("llama-server"),
+            host: "127.0.0.1".to_string(),
+            startup_timeout: Duration::from_secs(60),
+            request_timeout: Duration::from_secs(600),
+        }
+    }
+}
+
+struct SupervisedServer {
+    child: Child,
+    model_id: ModelId,
+    base_url: String,
+    stderr_tail: Arc<Mutex<String>>,
+    loaded: LoadedModel,
+}
+
+pub struct LlamaCppBackend {
+    config: LlamaCppConfig,
+    client: reqwest::Client,
+    server: Mutex<Option<SupervisedServer>>,
+    help_text: Mutex<Option<String>>,
+}
+
+impl LlamaCppBackend {
+    pub fn new(config: LlamaCppConfig) -> Self {
+        Self {
+            config,
+            client: reqwest::Client::new(),
+            server: Mutex::new(None),
+            help_text: Mutex::new(None),
+        }
+    }
+
+    async fn executable_help(&self) -> String {
+        let mut cached = self.help_text.lock().await;
+        if let Some(text) = cached.as_ref() {
+            return text.clone();
+        }
+        let text = Command::new(&self.config.server_executable)
+            .arg("--help")
+            .output()
+            .await
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default();
+        *cached = Some(text.clone());
+        text
+    }
+
+    async fn executable_version(&self) -> Option<String> {
+        let output = Command::new(&self.config.server_executable)
+            .arg("--version")
+            .output()
+            .await
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        // "version: 9960 (a935fbffe)\nbuilt with ..." -> "9960 (a935fbffe)"
+        text.lines()
+            .next()
+            .and_then(|l| l.strip_prefix("version:"))
+            .map(|s| s.trim().to_string())
+    }
+
+    fn find_free_port() -> Result<u16, BackendError> {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|e| {
+            BackendError::Internal(format!("failed to reserve a local port: {}", e))
+        })?;
+        listener
+            .local_addr()
+            .map(|a| a.port())
+            .map_err(|e| BackendError::Internal(format!("failed to read reserved port: {}", e)))
+    }
+
+    /// Only pass flags the installed executable actually advertises in `--help`,
+    /// rather than assuming every build supports the same surface.
+    async fn build_args(
+        &self,
+        model_path: &std::path::Path,
+        port: u16,
+        execution: &LlamaCppExecutionConfig,
+    ) -> Vec<String> {
+        let help = self.executable_help().await;
+        let supports = |flag: &str| help.contains(flag);
+
+        let mut args = vec![
+            "-m".to_string(),
+            model_path.to_string_lossy().into_owned(),
+            "--host".to_string(),
+            self.config.host.clone(),
+            "--port".to_string(),
+            port.to_string(),
+        ];
+
+        if let Some(v) = execution.context_size {
+            if supports("--ctx-size") {
+                args.push("-c".to_string());
+                args.push(v.to_string());
+            }
+        }
+        if let Some(v) = execution.cpu_threads {
+            if supports("--threads") {
+                args.push("-t".to_string());
+                args.push(v.to_string());
+            }
+        }
+        if let Some(v) = execution.cpu_threads_batch {
+            if supports("--threads-batch") {
+                args.push("-tb".to_string());
+                args.push(v.to_string());
+            }
+        }
+        if let Some(v) = execution.gpu_layers {
+            if supports("--gpu-layers") {
+                args.push("-ngl".to_string());
+                args.push(v.to_string());
+            }
+        }
+        if let Some(v) = execution.batch_size {
+            if supports("--batch-size") {
+                args.push("-b".to_string());
+                args.push(v.to_string());
+            }
+        }
+        if let Some(v) = execution.micro_batch_size {
+            if supports("--ubatch-size") {
+                args.push("-ub".to_string());
+                args.push(v.to_string());
+            }
+        }
+        if let Some(on) = execution.flash_attention {
+            if supports("--flash-attn") {
+                args.push("--flash-attn".to_string());
+                args.push(if on { "on" } else { "off" }.to_string());
+            }
+        }
+        if let Some(mmap) = execution.mmap {
+            if !mmap && supports("--no-mmap") {
+                args.push("--no-mmap".to_string());
+            }
+        }
+        if execution.mlock == Some(true) && supports("--mlock") {
+            args.push("--mlock".to_string());
+        }
+
+        args
+    }
+
+    async fn detect_accelerator(&self) -> Option<AcceleratorKind> {
+        let output = Command::new(&self.config.server_executable)
+            .arg("--list-devices")
+            .output()
+            .await
+            .ok()?;
+        let text = String::from_utf8_lossy(&output.stdout);
+        if text.contains("CUDA") {
+            Some(AcceleratorKind::Cuda)
+        } else if text.contains("MTL") || text.contains("Metal") {
+            Some(AcceleratorKind::Metal)
+        } else if text.contains("Vulkan") {
+            Some(AcceleratorKind::Vulkan)
+        } else if text.contains("ROCm") {
+            Some(AcceleratorKind::Rocm)
+        } else {
+            None
+        }
+    }
+
+    async fn stop_current(&self, guard: &mut Option<SupervisedServer>) {
+        if let Some(mut server) = guard.take() {
+            let _ = server.child.start_kill();
+            let _ = tokio::time::timeout(Duration::from_secs(5), server.child.wait()).await;
+        }
+    }
+}
+
+#[async_trait]
+impl ModelBackend for LlamaCppBackend {
+    async fn health(&self) -> Result<BackendHealth, BackendError> {
+        let version = self.executable_version().await;
+        let output = Command::new(&self.config.server_executable)
+            .arg("--version")
+            .output()
+            .await;
+        match output {
+            Ok(o) if o.status.success() => Ok(BackendHealth {
+                available: true,
+                detail: format!("{}", self.config.server_executable.display()),
+                version,
+            }),
+            Ok(o) => Ok(BackendHealth {
+                available: false,
+                detail: format!("executable exited with status {:?}", o.status.code()),
+                version: None,
+            }),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(BackendHealth {
+                available: false,
+                detail: format!("{} not found", self.config.server_executable.display()),
+                version: None,
+            }),
+            Err(e) => Ok(BackendHealth {
+                available: false,
+                detail: e.to_string(),
+                version: None,
+            }),
+        }
+    }
+
+    async fn capabilities(&self) -> Result<BackendCapabilities, BackendError> {
+        let version = self.executable_version().await;
+        let accelerator = self.detect_accelerator().await;
+        Ok(BackendCapabilities {
+            backend: "llama_cpp".to_string(),
+            version,
+            accelerators: accelerator
+                .into_iter()
+                .chain(std::iter::once(AcceleratorKind::Cpu))
+                .collect(),
+            supports_streaming: true,
+            supports_embedding: false,
+            supports_reranking: false,
+        })
+    }
+
+    async fn list_models(&self) -> Result<Vec<ModelAvailability>, BackendError> {
+        let guard = self.server.lock().await;
+        Ok(guard
+            .as_ref()
+            .map(|s| {
+                vec![ModelAvailability {
+                    model_id: s.model_id.clone(),
+                    path: None,
+                    loaded: true,
+                }]
+            })
+            .unwrap_or_default())
+    }
+
+    async fn load_model(&self, request: LoadModelRequest) -> Result<LoadedModel, BackendError> {
+        let mut guard = self.server.lock().await;
+        if let Some(existing) = guard.as_ref() {
+            if existing.model_id == request.model_id {
+                let mut reused = existing.loaded.clone();
+                reused.already_loaded = true;
+                return Ok(reused);
+            }
+        }
+
+        if !request.path.is_file() {
+            return Err(BackendError::LoadFailed(format!(
+                "model file not found: {}",
+                request.path.display()
+            )));
+        }
+
+        let execution: LlamaCppExecutionConfig = if request.execution_config.is_null() {
+            LlamaCppExecutionConfig::default()
+        } else {
+            serde_json::from_value(request.execution_config.clone())
+                .map_err(|e| BackendError::LoadFailed(format!("invalid execution_config: {}", e)))?
+        };
+
+        self.stop_current(&mut guard).await;
+
+        let port = Self::find_free_port()?;
+        let args = self.build_args(&request.path, port, &execution).await;
+
+        let mut command = Command::new(&self.config.server_executable);
+        command
+            .args(&args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+
+        let start = Instant::now();
+        let mut child = command
+            .spawn()
+            .map_err(|e| BackendError::LoadFailed(format!("failed to spawn server: {}", e)))?;
+
+        let stderr_tail = Arc::new(Mutex::new(String::new()));
+        if let Some(stderr) = child.stderr.take() {
+            let tail = stderr_tail.clone();
+            tokio::spawn(async move {
+                let mut lines = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    let mut buf = tail.lock().await;
+                    buf.push_str(&line);
+                    buf.push('\n');
+                    if buf.len() > STDERR_CAP_BYTES {
+                        let excess = buf.len() - STDERR_CAP_BYTES;
+                        buf.drain(0..excess);
+                    }
+                }
+            });
+        }
+
+        let base_url = format!("http://{}:{}", self.config.host, port);
+        let health_url = format!("{}/health", base_url);
+
+        loop {
+            if start.elapsed() > self.config.startup_timeout {
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                let stderr = stderr_tail.lock().await.clone();
+                return Err(BackendError::LoadFailed(format!(
+                    "server did not become ready within {:?}; stderr tail:\n{}",
+                    self.config.startup_timeout, stderr
+                )));
+            }
+            if let Ok(Some(status)) = child.try_wait() {
+                let stderr = stderr_tail.lock().await.clone();
+                return Err(BackendError::LoadFailed(format!(
+                    "server exited during startup (status {:?}); stderr tail:\n{}",
+                    status.code(),
+                    stderr
+                )));
+            }
+            if let Ok(resp) = self.client.get(&health_url).send().await {
+                if resp.status().is_success() {
+                    break;
+                }
+            }
+            tokio::time::sleep(HEALTH_POLL_INTERVAL).await;
+        }
+
+        let load_ms = start.elapsed().as_millis() as u64;
+        let accelerator = self.detect_accelerator().await;
+        let loaded = LoadedModel {
+            model_id: request.model_id.clone(),
+            context_tokens: execution.context_size,
+            already_loaded: false,
+            load_ms,
+            accelerator,
+            cpu_threads: execution.cpu_threads,
+            gpu_layers: execution.gpu_layers,
+            batch_size: execution.batch_size,
+        };
+
+        *guard = Some(SupervisedServer {
+            child,
+            model_id: request.model_id,
+            base_url,
+            stderr_tail,
+            loaded: loaded.clone(),
+        });
+
+        Ok(loaded)
+    }
+
+    async fn unload_model(&self, model: &ModelId) -> Result<(), BackendError> {
+        let mut guard = self.server.lock().await;
+        if guard.as_ref().map(|s| &s.model_id) == Some(model) {
+            self.stop_current(&mut guard).await;
+        }
+        Ok(())
+    }
+
+    async fn generate(
+        &self,
+        request: BackendGenerationRequest,
+        events: ModelEventSender,
+        cancellation: CancellationToken,
+    ) -> Result<BackendGenerationResponse, BackendError> {
+        let (base_url, _stderr_tail) = {
+            let guard = self.server.lock().await;
+            let server = guard
+                .as_ref()
+                .filter(|s| s.model_id == request.model_id)
+                .ok_or_else(|| BackendError::ModelNotFound(request.model_id.0.clone()))?;
+            (server.base_url.clone(), server.stderr_tail.clone())
+        };
+
+        let messages: Vec<serde_json::Value> = request
+            .messages
+            .iter()
+            .map(|m| {
+                let role = match m.role {
+                    MessageRole::System => "system",
+                    MessageRole::User => "user",
+                    MessageRole::Assistant => "assistant",
+                };
+                serde_json::json!({"role": role, "content": m.content})
+            })
+            .collect();
+
+        let mut body = serde_json::json!({
+            "messages": messages,
+            "stream": true,
+        });
+        let p = &request.parameters;
+        if let Some(v) = p.max_tokens {
+            body["max_tokens"] = serde_json::json!(v);
+        }
+        if let Some(v) = p.temperature {
+            body["temperature"] = serde_json::json!(v);
+        }
+        if let Some(v) = p.top_p {
+            body["top_p"] = serde_json::json!(v);
+        }
+        if let Some(v) = p.top_k {
+            body["top_k"] = serde_json::json!(v);
+        }
+        if let Some(v) = p.min_p {
+            body["min_p"] = serde_json::json!(v);
+        }
+        if let Some(v) = p.seed {
+            body["seed"] = serde_json::json!(v);
+        }
+        if !p.stop.is_empty() {
+            body["stop"] = serde_json::json!(p.stop);
+        }
+
+        let url = format!("{}/v1/chat/completions", base_url);
+        let request_fut = self.client.post(&url).json(&body).send();
+
+        let response = tokio::select! {
+            result = request_fut => result.map_err(|e| BackendError::GenerationFailed(e.to_string()))?,
+            _ = cancellation.cancelled() => return Err(BackendError::Cancelled),
+        };
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(BackendError::GenerationFailed(format!(
+                "server returned {}: {}",
+                status, text
+            )));
+        }
+
+        let mut stream = response.bytes_stream();
+        let mut buffer = String::new();
+        let mut content = String::new();
+        let mut finish_reason = FinishReason::Stop;
+        let mut prompt_tokens = 0u32;
+        let mut completion_tokens = 0u32;
+        let mut prompt_ms = 0u64;
+        let mut generation_ms = 0u64;
+        let mut prompt_tps = None;
+        let mut gen_tps = None;
+
+        loop {
+            let chunk = tokio::select! {
+                chunk = stream.next() => chunk,
+                _ = cancellation.cancelled() => return Err(BackendError::Cancelled),
+            };
+            let Some(chunk) = chunk else { break };
+            let bytes = chunk.map_err(|e| BackendError::GenerationFailed(e.to_string()))?;
+            buffer.push_str(&String::from_utf8_lossy(&bytes));
+
+            while let Some(pos) = buffer.find('\n') {
+                let line = buffer[..pos].trim_end_matches('\r').to_string();
+                buffer.drain(..=pos);
+                let Some(payload) = line.strip_prefix("data: ") else {
+                    continue;
+                };
+                if payload.trim() == "[DONE]" {
+                    continue;
+                }
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) else {
+                    continue;
+                };
+
+                if let Some(choice) = value.get("choices").and_then(|c| c.get(0)) {
+                    if let Some(delta_content) = choice
+                        .get("delta")
+                        .and_then(|d| d.get("content"))
+                        .and_then(|c| c.as_str())
+                    {
+                        content.push_str(delta_content);
+                        completion_tokens += 1;
+                        let _ = events
+                            .send(ModelStreamEvent::Token {
+                                text: delta_content.to_string(),
+                            })
+                            .await;
+                    }
+                    if let Some(reason) = choice.get("finish_reason").and_then(|r| r.as_str()) {
+                        finish_reason = match reason {
+                            "length" => FinishReason::Length,
+                            "stop" => FinishReason::Stop,
+                            _ => FinishReason::Stop,
+                        };
+                    }
+                }
+                if let Some(usage) = value.get("usage") {
+                    prompt_tokens = usage
+                        .get("prompt_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(prompt_tokens as u64) as u32;
+                    completion_tokens = usage
+                        .get("completion_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(completion_tokens as u64)
+                        as u32;
+                }
+                if let Some(timings) = value.get("timings") {
+                    prompt_ms = timings
+                        .get("prompt_ms")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0) as u64;
+                    generation_ms = timings
+                        .get("predicted_ms")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0) as u64;
+                    prompt_tps = timings.get("prompt_per_second").and_then(|v| v.as_f64());
+                    gen_tps = timings.get("predicted_per_second").and_then(|v| v.as_f64());
+                }
+            }
+        }
+
+        let _ = events.send(ModelStreamEvent::Done).await;
+
+        Ok(BackendGenerationResponse {
+            finish_reason,
+            content,
+            prompt_tokens,
+            completion_tokens,
+            prompt_ms,
+            generation_ms,
+            prompt_tokens_per_second: prompt_tps,
+            generation_tokens_per_second: gen_tps,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn execution_config_round_trips_through_json() {
+        let cfg = LlamaCppExecutionConfig {
+            context_size: Some(16384),
+            cpu_threads: Some(10),
+            cpu_threads_batch: Some(10),
+            gpu_layers: Some(99),
+            batch_size: Some(2048),
+            micro_batch_size: Some(512),
+            flash_attention: Some(true),
+            mmap: Some(true),
+            mlock: Some(false),
+        };
+        let value = serde_json::to_value(&cfg).unwrap();
+        let back: LlamaCppExecutionConfig = serde_json::from_value(value).unwrap();
+        assert_eq!(cfg.context_size, back.context_size);
+        assert_eq!(cfg.gpu_layers, back.gpu_layers);
+    }
+
+    #[tokio::test]
+    async fn health_reports_unavailable_for_a_missing_executable() {
+        let backend = LlamaCppBackend::new(LlamaCppConfig {
+            server_executable: PathBuf::from("/definitely/not/a/real/llama-server-binary"),
+            ..Default::default()
+        });
+        let health = backend.health().await.unwrap();
+        assert!(!health.available);
+    }
+}
