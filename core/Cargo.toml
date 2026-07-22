@@ -29,6 +29,7 @@ libloading = "0.8"
 lao_plugin_api = { path = "../lao_plugin_api" }
 tracing = "0.1"
 toml = "1.1.2"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 serial_test = "2.0"
