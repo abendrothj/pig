@@ -32,7 +32,7 @@ toml = "1.1.2"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
-serial_test = "2.0"
+serial_test = "3.5"
 memoffset = "0.9"
 proptest = "1.0"
 tempfile = "3"
