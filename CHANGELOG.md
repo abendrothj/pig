@@ -7,9 +7,30 @@ This project follows semantic versioning.
 ## [0.5.0] — 2026-07-23
 
 ### Added
+- **MLX backend** (`backend = "mlx"`) for Apple Silicon: supervises `mlx_lm.server`
+  (from the `mlx-lm` Python package), accepts HuggingFace model directories instead
+  of GGUF files, reports `Metal` accelerator, and is selectable via
+  `[worker.runtime.mlx] enabled = true`. 1.5–2× faster than llama.cpp on M-series
+  hardware for many models.
+- **Session affinity in pipelines**: `POST /v1/pipeline` accepts `"session_affinity": true`
+  to pin all steps after the first to the worker that served step 0, keeping the
+  computation on the same warm machine without exposing worker addresses to callers.
+- **Auto-benchmark on load**: `pig models load` now automatically runs a short
+  benchmark after a successful load, so the scheduler always has fresh TTFT and
+  throughput data without any explicit `pig models benchmark` call.
+- **TTFT scoring in the scheduler**: `BenchmarkSummary` gains `p50_ttft_ms`; the
+  scheduler scores candidates with lower time-to-first-token higher, so workers
+  with better latency are preferred when benchmark data is available.
+- **Routing response headers**: `POST /v1/generate` includes `X-Pig-Worker-Id` and
+  `X-Pig-Model-Id` headers on every response, so callers can inspect routing
+  decisions without a separate `POST /v1/route` call.
+- `execution_config` per model in `pig.toml`: backend-specific parameters
+  (`gpu_layers`, `flash_attention`, `parallel`, `cache_type_k/v` for llama_cpp;
+  `trust_remote_code`, `seed` for mlx) flow through to the subprocess at load time.
+- `parallel` and `cache_type_k`/`cache_type_v` in `LlamaCppExecutionConfig` (KV
+  cache quantization and concurrent request slots / continuous batching).
 - `POST /v1/pipeline` on the coordinator: sequential multi-step inference with
-  per-step `role`, `requirements`, and `inject_previous` context threading. Each
-  step runs the full scheduler independently, so steps can land on different workers.
+  per-step `role`, `requirements`, and `inject_previous` context threading.
 - `BenchmarkRecord` gains `p50_ttft_ms`, `p95_ttft_ms`, and
   `pipeline_acceptance_rate` fields (all optional, `#[serde(default)]` — existing
   records deserialize without changes).

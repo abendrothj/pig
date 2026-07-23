@@ -119,8 +119,28 @@ pub fn worker_serve(config: Option<String>) {
 
     let rt = tokio::runtime::Runtime::new().expect("failed to build tokio runtime");
     rt.block_on(async move {
-        let backend: std::sync::Arc<dyn pig_worker::backend::ModelBackend> =
-            if worker_config.runtime.llama_cpp.enabled {
+        let (backend, backend_name): (
+            std::sync::Arc<dyn pig_worker::backend::ModelBackend>,
+            &str,
+        ) = if worker_config.runtime.mlx.enabled {
+            (
+                std::sync::Arc::new(pig_worker::backend::mlx::MlxBackend::new(
+                    pig_worker::backend::mlx::MlxConfig {
+                        server_executable: PathBuf::from(
+                            &worker_config.runtime.mlx.server_executable,
+                        ),
+                        startup_timeout: std::time::Duration::from_secs(
+                            worker_config.runtime.mlx.startup_timeout_seconds,
+                        ),
+                        request_timeout: std::time::Duration::from_secs(
+                            worker_config.runtime.mlx.request_timeout_seconds,
+                        ),
+                    },
+                )),
+                "mlx",
+            )
+        } else if worker_config.runtime.llama_cpp.enabled {
+            (
                 std::sync::Arc::new(pig_worker::backend::llama_cpp::LlamaCppBackend::new(
                     pig_worker::backend::llama_cpp::LlamaCppConfig {
                         server_executable: PathBuf::from(
@@ -130,16 +150,16 @@ pub fn worker_serve(config: Option<String>) {
                         startup_timeout: worker_config.llama_cpp_startup_timeout(),
                         request_timeout: worker_config.llama_cpp_request_timeout(),
                     },
-                ))
-            } else {
-                std::sync::Arc::new(pig_worker::backend::fake::FakeBackend::new())
-            };
-        let backend_name = if worker_config.runtime.llama_cpp.enabled {
-            "llama_cpp"
+                )),
+                "llama_cpp",
+            )
         } else {
-            "fake"
-        }
-        .to_string();
+            (
+                std::sync::Arc::new(pig_worker::backend::fake::FakeBackend::new()),
+                "fake",
+            )
+        };
+        let backend_name = backend_name.to_string();
 
         let auth_token = match worker_config.resolve_auth_token() {
             Ok(t) => t,
@@ -618,18 +638,20 @@ fn with_worker_auth(
 
 pub fn models_load(model_id: String, worker: Option<String>) {
     let workers = require_workers();
-    let target = resolve_target_worker(&workers, worker);
+    let target = resolve_target_worker(&workers, worker.clone());
     let client = reqwest::blocking::Client::new();
     let resp = with_worker_auth(
         client
             .post(format!("{}/v1/models/load", target.url))
-            .json(&serde_json::json!({"model_id": model_id})),
+            .json(&serde_json::json!({"model_id": model_id.clone()})),
         &target,
     )
     .send();
     match resp {
         Ok(r) if r.status().is_success() => {
             println!("{}", r.text().unwrap_or_default());
+            println!("Running auto-benchmark...");
+            models_benchmark(model_id, worker, false);
         }
         Ok(r) => {
             eprintln!(

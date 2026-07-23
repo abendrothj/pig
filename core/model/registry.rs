@@ -193,9 +193,19 @@ fn resolve_entry(entry: ModelEntry) -> ResolvedModelEntry {
             unavailable_reason: None,
             entry,
         },
+        // Directories are valid for backends that use HuggingFace model dirs (e.g. mlx).
+        Ok(meta) if meta.is_dir() => ResolvedModelEntry {
+            file_size_bytes: None,
+            available: true,
+            unavailable_reason: None,
+            entry,
+        },
         Ok(_) => ResolvedModelEntry {
             available: false,
-            unavailable_reason: Some(format!("{} is not a regular file", entry.path.display())),
+            unavailable_reason: Some(format!(
+                "{} is neither a regular file nor a directory",
+                entry.path.display()
+            )),
             file_size_bytes: None,
             entry,
         },

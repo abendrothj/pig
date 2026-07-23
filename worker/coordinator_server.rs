@@ -19,7 +19,7 @@ use futures::StreamExt;
 use pig_core::model::{
     FinishReason, GenerationParameters, MessageRole, ModelChunk, ModelInvoker, ModelMessage,
     ModelRequest, ModelRequirements, ModelResponseStatus, ModelRole, ModelSelector, ModelToolCall,
-    ModelToolFunction, RequestId, RoutingExplanation, SchedulingOverrides, WorkerSnapshot,
+    ModelToolFunction, RequestId, RoutingExplanation, SchedulingOverrides, WorkerId, WorkerSnapshot,
 };
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
@@ -126,7 +126,19 @@ async fn generate(
     let coord = Arc::clone(&state.coordinator);
     let request = body.request;
     match task::spawn_blocking(move || coord.invoke(request)).await {
-        Ok(response) => Json(response).into_response(),
+        Ok(response) => {
+            let worker_id = response.execution.worker_id.0.clone();
+            let model_id = response.execution.model_id.0.clone();
+            let mut resp = Json(response).into_response();
+            let headers = resp.headers_mut();
+            if let Ok(v) = worker_id.parse() {
+                headers.insert("x-pig-worker-id", v);
+            }
+            if let Ok(v) = model_id.parse() {
+                headers.insert("x-pig-model-id", v);
+            }
+            resp
+        }
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 }
@@ -291,6 +303,9 @@ struct PipelineStep {
 #[derive(Debug, Deserialize)]
 struct PipelineRequest {
     steps: Vec<PipelineStep>,
+    /// When true, all steps after the first are pinned to the worker that served step 0.
+    #[serde(default)]
+    session_affinity: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -311,8 +326,10 @@ async fn pipeline(
     if body.steps.is_empty() {
         return error_response(StatusCode::BAD_REQUEST, "pipeline must have at least one step");
     }
+    let session_affinity = body.session_affinity;
     let mut outputs: Vec<PipelineStepOutput> = Vec::with_capacity(body.steps.len());
     let mut previous_content: Option<String> = None;
+    let mut pinned_worker: Option<WorkerId> = None;
 
     for (i, step) in body.steps.into_iter().enumerate() {
         let mut messages: Vec<ModelMessage> = Vec::new();
@@ -362,16 +379,27 @@ async fn pipeline(
         }
 
         let coord = Arc::clone(&state.coordinator);
-        let response = match task::spawn_blocking(move || coord.invoke(request)).await {
-            Ok(r) => r,
-            Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        let overrides = SchedulingOverrides {
+            force_worker: pinned_worker.clone(),
+            ..Default::default()
         };
+        let response =
+            match task::spawn_blocking(move || coord.invoke_with_overrides(request, overrides))
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+            };
         if response.status != ModelResponseStatus::Success {
             let msg = response
                 .error
                 .map(|e| e.to_string())
                 .unwrap_or_else(|| "inference failed".to_string());
             return error_response(StatusCode::BAD_GATEWAY, format!("step {i}: {msg}"));
+        }
+
+        if session_affinity && pinned_worker.is_none() {
+            pinned_worker = Some(response.execution.worker_id.clone());
         }
 
         let content = match response.output {

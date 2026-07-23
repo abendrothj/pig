@@ -326,6 +326,7 @@ impl Coordinator {
                     BenchmarkSummary {
                         prompt_tokens_per_second: record.prompt_tokens_per_second,
                         generation_tokens_per_second: record.generation_tokens_per_second,
+                        p50_ttft_ms: record.p50_ttft_ms,
                     },
                 ))
             })
@@ -574,6 +575,45 @@ fn parse_worker_sse_frame(frame: &str) -> Option<Result<ModelChunk, String>> {
         serde_json::from_str::<ModelChunk>(&data)
             .map_err(|error| format!("invalid worker stream chunk: {}", error))
     })
+}
+
+impl Coordinator {
+    /// Same as `invoke` but accepts explicit scheduling overrides — used by the
+    /// pipeline handler to implement session affinity (pin subsequent steps to
+    /// the same worker that served the first step).
+    pub fn invoke_with_overrides(
+        &self,
+        mut request: ModelRequest,
+        overrides: SchedulingOverrides,
+    ) -> ModelResponse {
+        let explanation = self.route(&request, &overrides);
+        let Some(placement) = explanation.selected else {
+            return failure_response(
+                &request,
+                ModelExecutionError::NoEligibleWorker {
+                    reason: explanation.to_string(),
+                },
+            );
+        };
+        let Some(worker_cfg) = self.workers.iter().find(|w| w.id == placement.worker_id.0) else {
+            return failure_response(
+                &request,
+                ModelExecutionError::WorkerUnavailable {
+                    worker: placement.worker_id.0.clone(),
+                },
+            );
+        };
+        request.parameters.reasoning_mode = resolve_reasoning_mode(&request);
+        match self.generate_on(worker_cfg, &request) {
+            Ok(response) => response,
+            Err(message) => failure_response(
+                &request,
+                ModelExecutionError::WorkerUnavailable {
+                    worker: format!("{}: {}", worker_cfg.id, message),
+                },
+            ),
+        }
+    }
 }
 
 impl ModelInvoker for Coordinator {

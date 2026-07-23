@@ -7,6 +7,7 @@
 
 pub mod fake;
 pub mod llama_cpp;
+pub mod mlx;
 
 use async_trait::async_trait;
 use pig_core::model::{

@@ -44,6 +44,10 @@ fn default_server_executable() -> String {
     "llama-server".to_string()
 }
 
+fn default_mlx_server_executable() -> String {
+    "mlx_lm.server".to_string()
+}
+
 fn default_startup_timeout() -> u64 {
     60
 }
@@ -75,10 +79,35 @@ impl Default for LlamaCppRuntimeConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct MlxRuntimeConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_mlx_server_executable")]
+    pub server_executable: String,
+    #[serde(default = "default_startup_timeout")]
+    pub startup_timeout_seconds: u64,
+    #[serde(default = "default_request_timeout")]
+    pub request_timeout_seconds: u64,
+}
+
+impl Default for MlxRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            server_executable: default_mlx_server_executable(),
+            startup_timeout_seconds: default_startup_timeout(),
+            request_timeout_seconds: default_request_timeout(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct RuntimeConfig {
     #[serde(default)]
     pub llama_cpp: LlamaCppRuntimeConfig,
+    #[serde(default)]
+    pub mlx: MlxRuntimeConfig,
 }
 
 fn default_bind() -> String {

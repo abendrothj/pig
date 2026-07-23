@@ -25,7 +25,28 @@ cache_type_v = "q8_0"
 [models.roles.reasoning]
 candidates = ["qwen3-8b-q4"]
 
-# Optional: named profiles for remote coordinators (pig --profile <name> ...)
+# --- MLX backend (Apple Silicon, HuggingFace model directories) ---
+# Use instead of llama_cpp when running mlx_lm models on macOS/Apple Silicon.
+# Install: pip install mlx-lm
+#
+# [worker.runtime.llama_cpp]
+# enabled = false
+#
+# [worker.runtime.mlx]
+# enabled = true
+# server_executable = "mlx_lm.server"   # must be on PATH
+#
+# [models.entries."qwen3-8b-mlx"]
+# format = "mlx"
+# path = "/path/to/mlx-community/Qwen3-8B-4bit"   # HuggingFace model directory
+# backend = "mlx"
+# context_tokens = 32768
+# roles = ["reasoning"]
+#
+# [models.entries."qwen3-8b-mlx".execution_config]
+# trust_remote_code = false   # set true only for models that require it
+
+# --- Named profiles for remote coordinators (pig --profile <name> ...) ---
 # [profiles.remote]
 # mode = "remote"
 # coordinator_url = "http://spectre:3001"

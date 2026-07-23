@@ -18,10 +18,10 @@ Coordinator (scheduler + HTTP client)
 Worker (separate process, `pig worker serve`)
         |
         v
-ModelBackend (llama_cpp)
+ModelBackend (llama_cpp | mlx)
         |
         v
-llama-server subprocess
+llama-server / mlx_lm.server subprocess
         |
         v
 ModelResponse (structured: output artifact + full execution metadata)
@@ -51,6 +51,52 @@ set: it parses `llama-server --help` once per worker process and only passes fla
 installed binary actually advertises, and calls `llama-server --list-devices` to detect
 CUDA/Metal/Vulkan availability. Different llama.cpp builds are handled automatically —
 there's nothing to configure for this.
+
+## Installing MLX (Apple Silicon only)
+
+```bash
+pip install mlx-lm
+mlx_lm.server --help   # confirm it's on PATH
+```
+
+MLX models are HuggingFace-format directories, not GGUF files. Download one:
+
+```bash
+pip install huggingface-hub
+huggingface-cli download mlx-community/Qwen3-8B-4bit --local-dir ~/models/Qwen3-8B-4bit
+```
+
+Then configure a worker to use the MLX backend:
+
+```toml
+[worker]
+id = "m4-worker"
+bind = "127.0.0.1:9847"
+
+[worker.auth]
+enabled = false
+
+[worker.runtime.llama_cpp]
+enabled = false
+
+[worker.runtime.mlx]
+enabled = true
+server_executable = "mlx_lm.server"
+
+[models.entries."qwen3-8b-mlx"]
+format = "mlx"
+path = "/Users/you/models/Qwen3-8B-4bit"
+backend = "mlx"
+context_tokens = 32768
+roles = ["reasoning"]
+
+[models.roles.reasoning]
+candidates = ["qwen3-8b-mlx"]
+```
+
+MLX handles quantization and Metal acceleration automatically — there are no `gpu_layers` or `flash_attention` knobs. The `execution_config` for MLX accepts only `trust_remote_code` (boolean, default false) and `seed` (integer).
+
+pig detects that the MLX backend is running and reports `Metal` as the accelerator in worker snapshots and routing explanations, so the scheduler scores MLX workers the same way as llama.cpp workers with Metal.
 
 ## Adding a GGUF model
 
@@ -183,6 +229,7 @@ default configuration.
 | Platform | Backend | Status |
 |---|---|---|
 | macOS (Apple Silicon) | llama.cpp + Metal | Tested — Metal autodetected, no configuration needed |
+| macOS (Apple Silicon) | MLX | Tested — 1.5–2× faster than llama.cpp on M-series; requires `mlx-lm` Python package |
 | Linux x86\_64 + NVIDIA GPU | llama.cpp + CUDA | Tested — build llama.cpp with `-DGGML_CUDA=ON`; pig detects CUDA via `nvidia-smi` and `--list-devices` |
 | Linux x86\_64 (CPU only) | llama.cpp | Tested — set `allow_cpu_fallback = true` when GPU VRAM is insufficient |
 | Windows | llama.cpp | Compiles; systemd lifecycle commands (`worker install/start/stop`) do not apply |
@@ -311,11 +358,15 @@ llama.cpp never requires touching this configuration.
   automatic model downloads (all explicit non-goals for v0.5).
 - Embeddings and reranking are not implemented by either backend; both report the
   capability as unsupported rather than pretending to work.
-- Only one `llama-server` process is supervised at a time per worker — loading a
-  different model stops the previous one. Run multiple workers (even on the same
-  machine, on different ports) for true concurrent multi-model serving.
+- Only one server process is supervised at a time per worker (one `llama-server` or
+  one `mlx_lm.server`) — loading a different model stops the previous one. Run
+  multiple workers (even on the same machine, on different ports) for true concurrent
+  multi-model serving.
+- The MLX backend does not support tool calling; `supports_tools` is reported as
+  false and the scheduler will route tool-calling requests to llama_cpp workers.
 - Benchmark records are not automatically invalidated by model/backend/hardware
-  changes; compare timestamps yourself.
+  changes; compare timestamps yourself. `pig models load` runs an auto-benchmark
+  on every successful load — benchmark data is fresh without any explicit invocation.
 - Hardware discovery is real and tested on macOS; the Linux path
   (`/proc/cpuinfo`, `/proc/meminfo`) is implemented but was not validated against a
   real Linux machine in this development session — see the project's commit history

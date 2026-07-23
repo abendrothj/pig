@@ -30,6 +30,8 @@ pub enum WorkerLocality {
 pub struct BenchmarkSummary {
     pub prompt_tokens_per_second: Option<f64>,
     pub generation_tokens_per_second: Option<f64>,
+    /// Median time-to-first-token from the most recent valid benchmark record, in ms.
+    pub p50_ttft_ms: Option<u32>,
 }
 
 /// A point-in-time description of one worker's health and capacity, as reported by
@@ -337,6 +339,16 @@ fn score_placement(
                 label: "measured prompt-processing throughput".to_string(),
                 value: (tps / 20.0).round() as i64,
             });
+        }
+        // Lower TTFT is better; invert so higher score = faster first token.
+        if let Some(ttft_ms) = summary.p50_ttft_ms {
+            let score = 50i64.saturating_sub(ttft_ms as i64 / 100);
+            if score > 0 {
+                components.push(ScoreComponent {
+                    label: format!("low time-to-first-token (p50 {}ms)", ttft_ms),
+                    value: score,
+                });
+            }
         }
     }
 
@@ -747,6 +759,7 @@ mod tests {
             BenchmarkSummary {
                 prompt_tokens_per_second: Some(400.0),
                 generation_tokens_per_second: Some(200.0),
+                p50_ttft_ms: None,
             },
         );
         let workers = vec![w1, worker("w2")]; // w2 has identical eligibility, no benchmark data
@@ -784,6 +797,7 @@ mod tests {
             BenchmarkSummary {
                 prompt_tokens_per_second: Some(9000.0),
                 generation_tokens_per_second: Some(9000.0),
+                p50_ttft_ms: None,
             },
         );
         let workers = vec![w1];

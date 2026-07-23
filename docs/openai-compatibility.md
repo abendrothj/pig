@@ -47,10 +47,11 @@ bounded worker channel applies backpressure instead of accumulating a response.
 ## Pipeline
 
 `POST /v1/pipeline` executes a sequence of model invocations in order, each
-dispatched through the full scheduler independently.
+dispatched through the full scheduler.
 
 ```json
 {
+  "session_affinity": true,
   "steps": [
     {
       "role": "reasoning",
@@ -73,6 +74,12 @@ memory floor, placement policy, timeouts. When `inject_previous` is `true`, the
 previous step's text output is prepended as an `assistant` message before the
 current step's messages; the caller controls context threading, pig executes it.
 
+`session_affinity` (default `false`): when `true`, all steps after the first are
+pinned to the worker that served step 0. This keeps a multi-step computation on
+the same warm machine — useful when each step builds on the same model's context
+window. If the pinned worker becomes unavailable mid-pipeline, the step fails
+rather than silently migrating to a different worker.
+
 Response:
 
 ```json
@@ -85,9 +92,17 @@ Response:
 ```
 
 A failed step returns an HTTP error with the step index in the message; prior
-steps' outputs are not returned on partial failure. Each step runs the full
-scheduler, so steps can land on different workers depending on their
-`requirements` and what each worker is best positioned to handle at that moment.
+steps' outputs are not returned on partial failure.
+
+### Routing response headers
+
+The `POST /v1/generate` endpoint includes these headers on every response so
+callers can inspect routing decisions without a separate `POST /v1/route` call:
+
+| Header | Example | Meaning |
+|---|---|---|
+| `X-Pig-Worker-Id` | `m4-worker` | Worker that served this request |
+| `X-Pig-Model-Id` | `qwen3-8b-q4` | Physical model that was used |
 
 ## Integration boundary
 
