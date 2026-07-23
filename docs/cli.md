@@ -69,7 +69,7 @@ pig coordinator serve \
     [--auth-token-env VAR]
 ```
 
-Starts the coordinator as a persistent HTTP service exposing `GET /v1/models`, `POST /v1/chat/completions`, and `POST /v1/pipeline`. See `docs/openai-compatibility.md`.
+Starts the coordinator as a persistent HTTP service exposing `GET /v1/models`, `POST /v1/chat/completions`, and `POST /v1/pipeline`. See `docs/openai-compatibility.md` for the OpenAI-compatible API and `docs/control-plane.md` for the control plane (`/v1/health`, `/v1/workers`, `/v1/route`, `/v1/generate`, `/v1/jobs`).
 
 ## Profile selection
 

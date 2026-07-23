@@ -360,7 +360,7 @@ impl ModelBackend for LlamaCppBackend {
             .lock()
             .await
             .as_ref()
-            .and_then(|s| s.loaded.accelerator.clone());
+            .and_then(|s| s.loaded.accelerator);
         let accelerator = match from_server {
             Some(a) => Some(a),
             None => self.detect_accelerator().await,

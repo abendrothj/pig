@@ -24,15 +24,20 @@ jobs:
           - os: macos-latest
             target: x86_64-apple-darwin
             archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - name: Build CLI (release)
-        run: cargo build --release --bin pig
+        run: cargo build --release --bin pig --target ${{ matrix.target }}
 
       - name: Package artifacts
         shell: bash
@@ -40,7 +45,7 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           STAGING="pig-${VERSION}-${{ matrix.target }}"
           mkdir -p "${STAGING}/bin"
-          cp target/release/pig "${STAGING}/bin/"
+          cp "target/${{ matrix.target }}/release/pig" "${STAGING}/bin/"
           cp README.md pig.toml.example "${STAGING}/"
           tar czf "pig-${VERSION}-${{ matrix.target }}.tar.gz" "${STAGING}"
 

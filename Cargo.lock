@@ -786,7 +786,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "pig"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "clap",
  "pig-core",
@@ -801,7 +801,7 @@ dependencies = [
 
 [[package]]
 name = "pig-core"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -813,7 +813,7 @@ dependencies = [
 
 [[package]]
 name = "pig-worker"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "axum",
