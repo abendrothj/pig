@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report incorrect behavior in LAO
+about: Report incorrect behavior in pig
 title: "[bug] "
 labels: bug
 assignees: ""
@@ -22,7 +22,7 @@ assignees: ""
 
 - OS:
 - Rust version:
-- LAO version/commit:
+- pig version/commit:
 - Plugin(s):
 
 ## Logs

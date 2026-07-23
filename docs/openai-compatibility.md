@@ -1,8 +1,8 @@
 # OpenAI Compatibility Strategy
 
-LAO is a distributed inference platform and control plane, not an agent
+pig is a distributed inference platform and control plane, not an agent
 framework. Agent harnesses such as Goose and Codex own planning, tool execution,
-repository interaction, and retry loops. LAO owns authentication, routing,
+repository interaction, and retry loops. pig owns authentication, routing,
 scheduling, benchmarking, metrics, worker lifecycle, and protocol compatibility.
 
 ## Gateway
@@ -28,7 +28,7 @@ operator-facing information and are not part of the client contract.
 
 Tool definitions, `tool_choice`, and backend-generated `tool_calls` remain
 structured. A request requiring tools is rejected when the selected worker does
-not advertise tool support; LAO must not silently discard tool semantics.
+not advertise tool support; pig must not silently discard tool semantics.
 
 Conversation history is also structured: assistant tool calls retain their IDs,
 function names, and argument text, while tool-result messages retain their
@@ -47,4 +47,4 @@ bounded worker channel applies backpressure instead of accumulating a response.
 Goose or another harness runs on the user's workstation with its MCP tools and
 workspace access. It authenticates only to the coordinator. Worker addresses,
 worker credentials, selected physical models, and backend details remain inside
-LAO's control plane.
+pig's control plane.

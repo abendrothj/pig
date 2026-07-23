@@ -1,6 +1,6 @@
 # pig — Local Model Inference
 
-LAO can run local language models through a supervised `llama-server` (llama.cpp)
+pig can run local language models through a supervised `llama-server` (llama.cpp)
 process, route requests across one or more registered workers based on hardware and
 model requirements, and invoke a model from inside a workflow step. This document is
 the setup and reference guide; architectural details live inline in the relevant
@@ -29,7 +29,7 @@ ModelResponse (structured: output artifact + full execution metadata)
 
 A worker is always a separate OS process from the CLI or coordinator. `core` defines `ModelInvoker`, a synchronous trait implemented by `worker::coordinator::Coordinator` using `reqwest::blocking` — calling it never requires a nested tokio runtime. All async complexity lives in `pig-worker`.
 
-**LAO does not split one model across multiple machines.** Each worker runs its own
+**pig does not split one model across multiple machines.** Each worker runs its own
 independent `llama-server`. Scaling across machines means routing *different* jobs to
 *different* workers, not distributing one model's layers between them.
 
@@ -43,10 +43,10 @@ llama-server --version   # confirm it's on PATH
 ```
 
 Linux: build from source (https://github.com/ggml-org/llama.cpp) with CUDA support
-(`-DGGML_CUDA=ON`) if you have an NVIDIA GPU, or install a prebuilt release. LAO invokes
+(`-DGGML_CUDA=ON`) if you have an NVIDIA GPU, or install a prebuilt release. pig invokes
 `llama-server` directly — it does not build or vendor llama.cpp itself.
 
-LAO detects the installed build's actual capabilities rather than assuming a fixed flag
+pig detects the installed build's actual capabilities rather than assuming a fixed flag
 set: it parses `llama-server --help` once per worker process and only passes flags the
 installed binary actually advertises, and calls `llama-server --list-devices` to detect
 CUDA/Metal/Vulkan availability. Different llama.cpp builds are handled automatically —
@@ -73,7 +73,7 @@ roles = ["reasoning"]
 **Model IDs containing a period must be quoted** in the TOML table header
 (`[models.entries."qwen3-0.6b"]`, not `[models.entries.qwen3-0.6b]`) — otherwise TOML
 parses the period as a nested-table separator and the entry silently splits into the
-wrong keys. This is standard TOML syntax, not a LAO-specific quirk, but it's an easy
+wrong keys. This is standard TOML syntax, not a pig-specific quirk, but it's an easy
 mistake with quantization-style names.
 
 Roles let a workflow ask for "reasoning" or "coding" without naming a specific model:
@@ -141,7 +141,7 @@ url = "http://127.0.0.1:9847"
 [[workers]]
 id = "linux-worker"
 url = "http://100.x.y.z:9847"        # e.g. a Tailscale/VPN address
-auth_token_env = "LAO_LINUX_WORKER_TOKEN"
+auth_token_env = "PIG_LINUX_WORKER_TOKEN"
 ```
 
 On the Linux worker itself, require auth since its bind address is non-loopback:
@@ -153,11 +153,11 @@ bind = "0.0.0.0:9847"
 
 [worker.auth]
 enabled = true
-token_env = "LAO_LINUX_WORKER_TOKEN"
+token_env = "PIG_LINUX_WORKER_TOKEN"
 ```
 
 ```bash
-export LAO_LINUX_WORKER_TOKEN=$(openssl rand -hex 32)
+export PIG_LINUX_WORKER_TOKEN=$(openssl rand -hex 32)
 pig worker serve --config pig.toml
 ```
 
@@ -165,7 +165,7 @@ The coordinator polls each configured worker's `/v1/health` and `/v1/capabilitie
 before every routing decision. If one worker is unreachable it gets a rejection reason
 in the routing explanation rather than being silently dropped — the coordinator keeps
 operating and routes to whichever configured worker is actually eligible. HTTP (not
-HTTPS) is fine over loopback or a trusted private network (VPN/Tailscale); LAO does not
+HTTPS) is fine over loopback or a trusted private network (VPN/Tailscale); pig does not
 implement public worker discovery and workers are never exposed to the internet by
 default configuration.
 
@@ -185,7 +185,7 @@ backends report `supports_embedding: false, supports_reranking: false`, and
 `/v1/embed`/`/v1/rerank` return an explicit 501) — don't route those roles here yet.
 
 The CPU stays free on both machines for what it's already doing: repository
-parsing/Codebase Memory indexing, git, compilation, tests, and prompt assembly. LAO
+parsing/Codebase Memory indexing, git, compilation, tests, and prompt assembly. pig
 routes separate jobs to separate workers; it does not distribute one model's
 transformer layers across machines.
 
@@ -278,7 +278,7 @@ file, backend, or worker hardware changes.
   config, so restart the worker after editing it.
 - **A "thinking" model (e.g. Qwen3) returns empty output at a low `max_tokens`** — the
   model spent its whole budget on chain-of-thought before reaching a final answer;
-  raise `max_tokens` or use a smaller/non-reasoning model for short responses. LAO
+  raise `max_tokens` or use a smaller/non-reasoning model for short responses. pig
   captures both `content` and `reasoning_content` deltas so you'll see the reasoning
   text rather than nothing, but a very low budget can still cut it off mid-thought.
 - **Worker fails to start on a non-loopback bind** — set `worker.auth.enabled = true`

@@ -489,7 +489,7 @@ pub struct ModelUsage {
     pub total_tokens: u32,
 }
 
-/// One ordered piece of an in-progress model response. This is LAO's canonical
+/// One ordered piece of an in-progress model response. This is pig's canonical
 /// streaming contract: it describes model output, not an HTTP or SSE wire format.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

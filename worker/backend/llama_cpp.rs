@@ -1,5 +1,5 @@
 //! Supervises `llama-server` as a subprocess and talks to its OpenAI-compatible HTTP
-//! API. LAO never links llama.cpp into its own process — this backend launches the
+//! API. pig never links llama.cpp into its own process — this backend launches the
 //! real executable directly (never a shell), waits for it to report ready, and
 //! forwards generation requests to it.
 //!
@@ -832,7 +832,7 @@ mod tests {
             },
             ModelMessage {
                 role: MessageRole::Tool,
-                content: r#"{"name":"LAO"}"#.to_string(),
+                content: r#"{"name":"pig"}"#.to_string(),
                 tool_calls: vec![],
                 tool_call_id: Some("call_lookup".to_string()),
             },

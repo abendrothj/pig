@@ -1,30 +1,19 @@
-[trust]
-# Keep dangerous capabilities disabled unless a workflow is trusted.
-allow_filesystem_read = false
-allow_filesystem_write = false
-allow_filesystem_enumerate = false
-allow_shell = false
-allow_network = false
-allow_subprocess = false
-allow_code_graph_read = false
-# v0.5 local model inference (see docs/local-inference.md)
-allow_model_inference = false
-allow_model_load = false
-allow_network_loopback = false
-allow_network_private = false
-allow_accelerator_use = false
+[[workers]]
+id = "my-worker"
+url = "http://192.168.1.100:9847"
+# auth_token_env = "MY_WORKER_TOKEN"   # optional; worker must have auth enabled
 
-# Explicit filesystem roots only — no implicit cwd/repo root.
-# Required when any filesystem_* capability is enabled.
-filesystem_roots = []
+[models.entries."qwen3-8b-q4"]
+format = "gguf"
+path = "/path/to/Qwen3-8B-Q4_K_M.gguf"
+backend = "llama_cpp"
+context_tokens = 8192
+roles = ["reasoning"]
 
-# Allowed network endpoints (host, host:port, or URL prefix).
-# Required when allow_network is true unless you use allow_plugins.
-network_endpoints = []
+[models.roles.reasoning]
+candidates = ["qwen3-8b-q4"]
 
-# Optional escape hatch for specific trusted plugins.
-allow_plugins = []
-
-# `code-graph query` (read-only structural code intelligence via codebase-memory-mcp)
-# requires allow_code_graph_read = true above. The provider binary is resolved from
-# LAO_CODEBASE_MEMORY_MCP_PATH if set, else from PATH.
+# Optional: named profiles for remote coordinators (pig --profile <name> ...)
+# [profiles.remote]
+# url = "http://spectre:9847"
+# auth_token_env = "REMOTE_COORDINATOR_TOKEN"

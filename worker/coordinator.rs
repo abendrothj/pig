@@ -35,7 +35,7 @@ impl std::fmt::Display for CoordinatorStreamError {
             Self::WorkerUnavailable(reason) => write!(f, "worker unavailable: {}", reason),
             Self::ToolsUnsupported => write!(
                 f,
-                "the selected LAO worker cannot honor requested tool calling"
+                "the selected pig worker cannot honor requested tool calling"
             ),
         }
     }
@@ -818,14 +818,14 @@ url = "http://127.0.0.1:9847"
 [[workers]]
 id = "linux-worker"
 url = "http://100.64.0.5:9847"
-auth_token_env = "LAO_LINUX_WORKER_TOKEN"
+auth_token_env = "PIG_LINUX_WORKER_TOKEN"
 "#;
         let cfg = WorkersConfig::from_toml_str(toml).unwrap();
         assert_eq!(cfg.workers.len(), 2);
         assert_eq!(cfg.workers[0].id, "macbook-worker");
         assert_eq!(
             cfg.workers[1].auth_token_env.as_deref(),
-            Some("LAO_LINUX_WORKER_TOKEN")
+            Some("PIG_LINUX_WORKER_TOKEN")
         );
     }
 

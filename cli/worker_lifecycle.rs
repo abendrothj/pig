@@ -101,7 +101,7 @@ fn write_file(path: &str, contents: &str, mode: u32) -> std::io::Result<()> {
 
 fn generate_sysusers_conf() -> String {
     format!(
-        "u {account} - \"LAO worker service account\" {home} /usr/sbin/nologin\n",
+        "u {account} - \"pig worker service account\" {home} /usr/sbin/nologin\n",
         account = SERVICE_ACCOUNT,
         home = SERVICE_HOME,
     )
@@ -114,7 +114,7 @@ fn generate_unit_file(cfg: &WorkerConfig) -> String {
     let timeout_stop = cfg.shutdown_grace_seconds + 10;
     format!(
         "[Unit]\n\
-         Description=LAO model-inference worker ({id})\n\
+         Description=pig model-inference worker ({id})\n\
          After=network-online.target tailscaled.service\n\
          Wants=network-online.target\n\
          StartLimitIntervalSec=60\n\
@@ -451,7 +451,7 @@ mod tests {
              shutdown_grace_seconds = 20\n\
              [worker.auth]\n\
              enabled = true\n\
-             token_env = \"LAO_TEST_TOKEN\"\n",
+             token_env = \"PIG_TEST_TOKEN\"\n",
         )
         .unwrap()
     }
@@ -459,7 +459,7 @@ mod tests {
     #[test]
     fn unit_file_uses_the_configured_worker_id() {
         let unit = generate_unit_file(&sample_config());
-        assert!(unit.contains("Description=LAO model-inference worker (fedora-worker)"));
+        assert!(unit.contains("Description=pig model-inference worker (fedora-worker)"));
     }
 
     #[test]
@@ -503,7 +503,7 @@ mod tests {
         let conf = generate_sysusers_conf();
         assert_eq!(
             conf,
-            "u pig-worker - \"LAO worker service account\" /var/lib/pig-worker /usr/sbin/nologin\n"
+            "u pig-worker - \"pig worker service account\" /var/lib/pig-worker /usr/sbin/nologin\n"
         );
     }
 

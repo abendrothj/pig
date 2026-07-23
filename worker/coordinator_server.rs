@@ -286,7 +286,7 @@ async fn openai_chat_completions(
             Err(CoordinatorStreamError::ToolsUnsupported) => {
                 return error_response(
                     StatusCode::NOT_IMPLEMENTED,
-                    "the selected LAO worker cannot honor requested tool calling",
+                    "the selected pig worker cannot honor requested tool calling",
                 );
             }
             Err(error) => return error_response(StatusCode::BAD_GATEWAY, error.to_string()),
@@ -304,7 +304,7 @@ async fn openai_chat_completions(
         if !supports_tools {
             return error_response(
                 StatusCode::NOT_IMPLEMENTED,
-                "the selected LAO worker cannot honor requested tool calling",
+                "the selected pig worker cannot honor requested tool calling",
             );
         }
     }

@@ -244,7 +244,7 @@ request_timeout_seconds = 600
 
     #[test]
     fn non_loopback_bind_with_auth_enabled_is_accepted() {
-        let toml = "[worker]\nid = \"w\"\nbind = \"0.0.0.0:9847\"\n[worker.auth]\nenabled = true\ntoken_env = \"LAO_TOKEN\"\n";
+        let toml = "[worker]\nid = \"w\"\nbind = \"0.0.0.0:9847\"\n[worker.auth]\nenabled = true\ntoken_env = \"PIG_TOKEN\"\n";
         assert!(WorkerConfig::from_toml_str(toml).is_ok());
     }
 
@@ -263,13 +263,13 @@ request_timeout_seconds = 600
 
     #[test]
     fn resolve_auth_token_reads_named_env_var() {
-        std::env::set_var("LAO_TEST_WORKER_TOKEN_XYZ", "secret123");
-        let toml = "[worker]\nid = \"w\"\nbind = \"127.0.0.1:9847\"\n[worker.auth]\nenabled = true\ntoken_env = \"LAO_TEST_WORKER_TOKEN_XYZ\"\n";
+        std::env::set_var("PIG_TEST_WORKER_TOKEN_XYZ", "secret123");
+        let toml = "[worker]\nid = \"w\"\nbind = \"127.0.0.1:9847\"\n[worker.auth]\nenabled = true\ntoken_env = \"PIG_TEST_WORKER_TOKEN_XYZ\"\n";
         let cfg = WorkerConfig::from_toml_str(toml).unwrap();
         assert_eq!(
             cfg.resolve_auth_token().unwrap().as_deref(),
             Some("secret123")
         );
-        std::env::remove_var("LAO_TEST_WORKER_TOKEN_XYZ");
+        std::env::remove_var("PIG_TEST_WORKER_TOKEN_XYZ");
     }
 }

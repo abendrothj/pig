@@ -1,4 +1,4 @@
-// Cross-platform utilities for LAO
+// Cross-platform utilities for pig
 // Provides platform detection, path handling, and OS-specific functionality
 
 use std::env;
@@ -128,10 +128,10 @@ impl PathUtils {
         base.join(path)
     }
 
-    /// Get the LAO plugin directory
+    /// Get the pig plugin directory
     pub fn plugin_dir() -> PathBuf {
         // Try environment variable first
-        if let Ok(plugin_dir) = env::var("LAO_PLUGIN_DIR") {
+        if let Ok(plugin_dir) = env::var("PIG_PLUGIN_DIR") {
             let path = PathBuf::from(plugin_dir);
             if path.exists() {
                 return path;
@@ -173,10 +173,10 @@ impl PathUtils {
         fallback
     }
 
-    /// Get the LAO cache directory
+    /// Get the pig cache directory
     pub fn cache_dir() -> PathBuf {
         // Try environment variable first
-        if let Ok(cache_dir) = env::var("LAO_CACHE_DIR") {
+        if let Ok(cache_dir) = env::var("PIG_CACHE_DIR") {
             return PathBuf::from(cache_dir);
         }
 
@@ -186,10 +186,10 @@ impl PathUtils {
             .join("pig")
     }
 
-    /// Get the LAO config directory
+    /// Get the pig config directory
     pub fn config_dir() -> PathBuf {
         // Try environment variable first
-        if let Ok(config_dir) = env::var("LAO_CONFIG_DIR") {
+        if let Ok(config_dir) = env::var("PIG_CONFIG_DIR") {
             return PathBuf::from(config_dir);
         }
 

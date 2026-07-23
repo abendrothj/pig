@@ -1,4 +1,4 @@
-//! LAO worker: a long-running process that supervises a model backend, exposes it
+//! pig worker: a long-running process that supervises a model backend, exposes it
 //! over HTTP, and (via `coordinator`) lets the CLI/workflow engine talk to any
 //! configured worker without knowing backend details.
 
