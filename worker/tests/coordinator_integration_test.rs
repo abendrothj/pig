@@ -33,6 +33,7 @@ fn model_registry_with_local_entry() -> (ModelRegistry, String) {
         roles: vec![ModelRole::Reasoning],
         execution_config: serde_json::Value::Null,
         tool_calling: None,
+                    reasoning: None,
     };
     let mut roles = BTreeMap::new();
     roles.insert(ModelRole::Reasoning, vec![ModelId::from("m1")]);

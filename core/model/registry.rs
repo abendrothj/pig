@@ -28,6 +28,12 @@ pub struct ModelEntry {
     /// or `false` to disable tool routing even on a capable backend.
     #[serde(default)]
     pub tool_calling: Option<bool>,
+    /// Whether this model supports extended reasoning / chain-of-thought (e.g. Qwen3
+    /// `/think` mode, DeepSeek R1). `None` means not declared. Used as a hard routing
+    /// constraint: requests with `requirements.reasoning = true` are only sent to models
+    /// where this is `Some(true)`.
+    #[serde(default)]
+    pub reasoning: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -113,6 +119,8 @@ impl ModelRegistry {
             execution_config: serde_json::Value,
             #[serde(default)]
             tool_calling: Option<bool>,
+            #[serde(default)]
+            reasoning: Option<bool>,
         }
         #[derive(Deserialize)]
         struct ModelsToml {
@@ -145,6 +153,7 @@ impl ModelRegistry {
                 roles: e.roles.iter().map(|r| ModelRole::parse(r)).collect(),
                 execution_config: e.execution_config,
                 tool_calling: e.tool_calling,
+                reasoning: e.reasoning,
             })
             .collect();
 
@@ -327,6 +336,7 @@ cache_type_k = "q8_0"
                 roles: vec![],
                 execution_config: serde_json::Value::Null,
                 tool_calling: None,
+                reasoning: None,
             },
             ModelEntry {
                 id: ModelId::from("a"),
@@ -338,6 +348,7 @@ cache_type_k = "q8_0"
                 roles: vec![],
                 execution_config: serde_json::Value::Null,
                 tool_calling: None,
+                reasoning: None,
             },
         ];
         let err = ModelRegistry::new(entries, BTreeMap::new()).unwrap_err();
@@ -374,6 +385,7 @@ cache_type_k = "q8_0"
             roles: vec![],
             execution_config: serde_json::Value::Null,
             tool_calling: None,
+                reasoning: None,
         };
         let registry = ModelRegistry::new(vec![entry], BTreeMap::new()).unwrap();
         let resolved = registry.resolve(&ModelId::from("local")).unwrap();

@@ -302,6 +302,11 @@ pub struct ModelRequirements {
     pub require_streaming: bool,
     #[serde(default)]
     pub placement_policy: PlacementPolicy,
+    /// If `Some(true)`, only route to models tagged `reasoning = true` in their
+    /// registry entry. Requests that require reasoning will be rejected rather than
+    /// silently sent to a model that lacks the capability.
+    #[serde(default)]
+    pub reasoning: Option<bool>,
 }
 
 fn default_true() -> bool {
@@ -325,6 +330,7 @@ impl Default for ModelRequirements {
             minimum_available_memory_bytes: None,
             require_streaming: false,
             placement_policy: PlacementPolicy::Any,
+            reasoning: None,
         }
     }
 }

@@ -152,6 +152,17 @@ support differs from its backend's default:
 tool_calling = true    # explicit: this model supports tool calls via llama_cpp
 ```
 
+`reasoning = true` marks a model as supporting extended chain-of-thought (e.g. Qwen3
+`/think` mode, DeepSeek R1). Requests with `requirements.reasoning = true` are only
+routed to models tagged this way — non-reasoning models are hard-rejected rather than
+silently used. `reasoning` is not declared by default; you opt in per model entry:
+
+```toml
+[models.entries."qwen3-8b-q4"]
+# ...
+reasoning = true    # this model supports /think mode; route reasoning requests here
+```
+
 Roles let a workflow ask for "reasoning" or "coding" without naming a specific model:
 
 ```toml

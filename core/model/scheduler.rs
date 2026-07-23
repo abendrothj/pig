@@ -208,6 +208,14 @@ fn check_hard_constraints(
                     ));
                 }
             }
+            if request.requirements.reasoning == Some(true)
+                && entry.reasoning != Some(true)
+            {
+                reasons.push(format!(
+                    "request requires a reasoning-capable model but '{}' is not tagged reasoning = true",
+                    model_id
+                ));
+            }
             if let (Some(estimated), Some(available)) =
                 (entry.estimated_memory_bytes, worker.available_memory_bytes)
             {
@@ -497,6 +505,7 @@ mod tests {
             roles: roles.to_vec(),
             execution_config: serde_json::Value::Null,
             tool_calling: None,
+            reasoning: None,
         }
     }
 
@@ -784,6 +793,49 @@ mod tests {
             .score_breakdown
             .iter()
             .any(|c| c.label == "measured generation throughput"));
+    }
+
+    #[test]
+    fn reasoning_requirement_rejects_non_reasoning_models() {
+        let think_entry = ModelEntry {
+            id: ModelId::from("think"),
+            format: "gguf".to_string(),
+            path: PathBuf::from("/models/think.gguf"),
+            backend: "llama_cpp".to_string(),
+            context_tokens: Some(32768),
+            estimated_memory_bytes: Some(5_000_000_000),
+            roles: vec![ModelRole::Reasoning],
+            execution_config: serde_json::Value::Null,
+            tool_calling: None,
+            reasoning: Some(true),
+        };
+        let reg = ModelRegistry::new(
+            vec![
+                entry("big", 32768, 11_000_000_000, &[ModelRole::Reasoning]),
+                entry("small", 32768, 4_000_000_000, &[ModelRole::Reasoning]),
+                think_entry,
+            ],
+            BTreeMap::new(),
+        )
+        .unwrap();
+
+        let mut w = worker("w1");
+        w.known_models.push(ModelId::from("think"));
+
+        // Reasoning-capable model: must be selected.
+        let mut req = request();
+        req.model = Some(crate::model::types::ModelSelector::Id(ModelId::from("think")));
+        req.requirements.reasoning = Some(true);
+        let exp = schedule(&req, &reg, &[w.clone()], &SchedulingOverrides::default());
+        assert!(exp.selected.is_some(), "reasoning model should be selected");
+
+        // Non-reasoning model with reasoning requirement: must be rejected.
+        let mut req2 = request();
+        req2.model = Some(crate::model::types::ModelSelector::Id(ModelId::from("small")));
+        req2.requirements.reasoning = Some(true);
+        let exp2 = schedule(&req2, &reg, &[w], &SchedulingOverrides::default());
+        assert!(exp2.selected.is_none(), "non-reasoning model must be rejected");
+        assert!(exp2.rejected.iter().any(|r| r.reasons.iter().any(|s| s.contains("reasoning"))));
     }
 
     #[test]

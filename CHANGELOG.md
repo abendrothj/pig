@@ -17,6 +17,10 @@ This project follows semantic versioning.
   or `false` in `[models.entries.*]` to override the backend's blanket default. The
   coordinator checks the model registry before the worker snapshot, so an MLX-served
   model that actually supports tools can be marked as such without changing the backend.
+- **`reasoning` capability routing**: `reasoning = true` on a model entry marks it as
+  supporting extended chain-of-thought (Qwen3 `/think`, DeepSeek R1, etc.). Requests
+  with `requirements.reasoning = true` are hard-rejected for any model not tagged this
+  way — the scheduler never silently falls back to a non-reasoning model.
 - **Async auto-benchmark**: `pig models load` prints "Auto-benchmark running in
   background." and returns immediately; the benchmark runs in a detached thread and
   writes the record to `.pig_benchmarks/` without blocking the user.
