@@ -1,6 +1,7 @@
 [package]
 name = "markdown_report_plugin"
 version.workspace = true
+license.workspace = true
 edition.workspace = true
 description = "Formats text into a Markdown report, optionally writing it to disk"
 authors.workspace = true

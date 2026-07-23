@@ -1,6 +1,7 @@
 [package]
 name = "prompt_dispatcher_plugin"
 version.workspace = true
+license.workspace = true
 edition.workspace = true
 description = "Generates a workflow plan from a prompt using a local LLM (Ollama)"
 authors.workspace = true

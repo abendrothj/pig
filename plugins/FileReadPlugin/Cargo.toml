@@ -1,6 +1,7 @@
 [package]
 name = "file_read_plugin"
 version.workspace = true
+license.workspace = true
 edition.workspace = true
 description = "Reads a file from disk and returns its contents as text"
 authors.workspace = true
