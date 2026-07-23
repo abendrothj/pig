@@ -307,19 +307,7 @@ pub fn workers_inspect(worker_id: String, json: bool, profile: &Profile) {
 }
 
 fn snapshot_json(snapshots: &[pig_core::model::WorkerSnapshot]) -> serde_json::Value {
-    serde_json::json!(snapshots
-        .iter()
-        .map(|s| serde_json::json!({
-            "worker_id": s.worker_id.0,
-            "healthy": s.healthy,
-            "backend": s.backend,
-            "backend_healthy": s.backend_healthy,
-            "queue_depth": s.queue_depth,
-            "max_queued_jobs": s.max_queued_jobs,
-            "active_jobs": s.active_jobs,
-            "known_models": s.known_models.iter().map(|m| m.0.clone()).collect::<Vec<_>>(),
-        }))
-        .collect::<Vec<_>>())
+    serde_json::to_value(snapshots).unwrap_or(serde_json::Value::Array(vec![]))
 }
 
 /// `worker_id` given -> that one worker's live telemetry. Omitted -> a coordinator-
