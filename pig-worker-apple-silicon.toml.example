@@ -1,0 +1,52 @@
+# pig worker config — Apple Silicon (MLX backend)
+#
+# MLX runs models as HuggingFace directories via mlx_lm.server.
+# Install: pip install mlx-lm
+# Download a model: python -c "from huggingface_hub import snapshot_download; snapshot_download('mlx-community/Qwen3-8B-4bit', local_dir='~/models/Qwen3-8B-4bit')"
+
+[worker]
+id = "apple-silicon-worker"
+bind = "127.0.0.1:9847"
+max_concurrent_jobs = 2
+max_queued_jobs = 8
+
+[worker.auth]
+enabled = false
+
+[worker.runtime.llama_cpp]
+enabled = false
+
+[worker.runtime.mlx]
+enabled = true
+server_executable = "mlx_lm.server"
+startup_timeout_seconds = 120
+request_timeout_seconds = 600
+
+# --- Models ---
+# MLX models are HuggingFace directories, not GGUF files.
+# path must point to the downloaded directory.
+
+[models.entries."qwen3-8b-mlx"]
+format = "mlx"
+path = "/path/to/models/Qwen3-8B-4bit"
+backend = "mlx"
+context_tokens = 32768
+reasoning = true
+tool_calling = true
+roles = ["reasoning", "coding"]
+
+# MoE option: ~3B active params at 30B parameter coverage, fits in ~20GB RAM
+# [models.entries."qwen3-30b-a3b-mlx"]
+# format = "mlx"
+# path = "/path/to/models/Qwen3-30B-A3B-4bit"
+# backend = "mlx"
+# context_tokens = 32768
+# reasoning = true
+# tool_calling = true
+# roles = ["reasoning", "coding"]
+
+[models.roles.reasoning]
+candidates = ["qwen3-8b-mlx"]
+
+[models.roles.coding]
+candidates = ["qwen3-8b-mlx"]

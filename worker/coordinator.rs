@@ -767,18 +767,16 @@ fn failure_response(request: &ModelRequest, error: ModelExecutionError) -> Model
 /// reaches the backend. The backend translates the resolved mode to a control
 /// token; it never makes policy decisions.
 ///
-/// Policy: `Reasoning` and `Coding` roles always reason. For other roles,
-/// reasoning is enabled if the request uses tools (agentic loop) and disabled
-/// otherwise (conversational, latency-sensitive).
+/// Policy: when the caller explicitly sets a mode, honour it. Otherwise leave
+/// reasoning off. The caller (CLI `--reasoning-mode`, pipeline step config, or
+/// an OpenAI-compatible client that sends `reasoning_mode`) is in the best
+/// position to decide — auto-enabling by role surprised callers that manage
+/// their own reasoning loops and don't expect the gateway to inject /think tokens.
 fn resolve_reasoning_mode(request: &ModelRequest) -> ReasoningMode {
     if request.parameters.reasoning_mode != ReasoningMode::Auto {
         return request.parameters.reasoning_mode;
     }
-    match request.role {
-        ModelRole::Reasoning | ModelRole::Coding => ReasoningMode::Enabled,
-        _ if !request.parameters.tools.is_empty() => ReasoningMode::Enabled,
-        _ => ReasoningMode::Disabled,
-    }
+    ReasoningMode::Disabled
 }
 
 #[cfg(test)]
@@ -871,22 +869,15 @@ auth_token_env = "PIG_LINUX_WORKER_TOKEN"
     }
 
     #[test]
-    fn resolve_auto_reasoning_role_enables_for_reasoning_and_coding() {
+    fn resolve_auto_reasoning_defaults_to_disabled_for_all_roles() {
+        // Auto no longer enables reasoning by role — the caller decides.
         let r = reasoning_request(ModelRole::Reasoning, vec![], ReasoningMode::Auto);
-        assert_eq!(resolve_reasoning_mode(&r), ReasoningMode::Enabled);
+        assert_eq!(resolve_reasoning_mode(&r), ReasoningMode::Disabled);
         let r = reasoning_request(ModelRole::Coding, vec![], ReasoningMode::Auto);
-        assert_eq!(resolve_reasoning_mode(&r), ReasoningMode::Enabled);
-    }
-
-    #[test]
-    fn resolve_auto_reasoning_with_tools_enables_for_any_role() {
+        assert_eq!(resolve_reasoning_mode(&r), ReasoningMode::Disabled);
         let tool = serde_json::json!({"type": "function", "function": {"name": "search", "parameters": {}}});
         let r = reasoning_request(ModelRole::Summarization, vec![tool], ReasoningMode::Auto);
-        assert_eq!(resolve_reasoning_mode(&r), ReasoningMode::Enabled);
-    }
-
-    #[test]
-    fn resolve_auto_reasoning_disables_for_other_roles_without_tools() {
+        assert_eq!(resolve_reasoning_mode(&r), ReasoningMode::Disabled);
         let r = reasoning_request(ModelRole::Summarization, vec![], ReasoningMode::Auto);
         assert_eq!(resolve_reasoning_mode(&r), ReasoningMode::Disabled);
     }

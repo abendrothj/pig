@@ -24,6 +24,8 @@ Thumbs.db
 !.env.example
 pig.toml
 !pig.toml.example
+pig-worker-*.toml
+!pig-worker-*.toml.example
 
 # Editor
 .vscode/

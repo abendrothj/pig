@@ -390,7 +390,7 @@ fn resolve_model(
             .registry
             .candidates_for_role(&request.role)
             .into_iter()
-            .find(|e| e.path.is_file())
+            .find(|e| e.path.exists())
             .cloned(),
     };
     let Some(entry) = entry else {
