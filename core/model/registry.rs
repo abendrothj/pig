@@ -17,6 +17,11 @@ pub struct ModelEntry {
     pub context_tokens: Option<u32>,
     pub estimated_memory_bytes: Option<u64>,
     pub roles: Vec<ModelRole>,
+    /// Backend-specific execution parameters (e.g. gpu_layers, flash_attention,
+    /// parallel, cache_type_k). Merged into the load request when no explicit
+    /// execution_config is provided by the caller.
+    #[serde(default)]
+    pub execution_config: serde_json::Value,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -98,6 +103,8 @@ impl ModelRegistry {
             estimated_memory_bytes: Option<u64>,
             #[serde(default)]
             roles: Vec<String>,
+            #[serde(default)]
+            execution_config: serde_json::Value,
         }
         #[derive(Deserialize)]
         struct ModelsToml {
@@ -128,6 +135,7 @@ impl ModelRegistry {
                 context_tokens: e.context_tokens,
                 estimated_memory_bytes: e.estimated_memory_bytes,
                 roles: e.roles.iter().map(|r| ModelRole::parse(r)).collect(),
+                execution_config: e.execution_config,
             })
             .collect();
 
@@ -256,6 +264,29 @@ roles = ["coding"]
 "#;
 
     #[test]
+    fn execution_config_is_preserved_per_model() {
+        let toml = r#"
+[models.entries."qwen3-8b-q4"]
+format = "gguf"
+path = "/models/qwen3-8b.gguf"
+backend = "llama_cpp"
+roles = ["reasoning"]
+
+[models.entries."qwen3-8b-q4".execution_config]
+gpu_layers = -1
+flash_attention = true
+parallel = 2
+cache_type_k = "q8_0"
+"#;
+        let registry = ModelRegistry::from_toml_str(toml).unwrap();
+        let entry = registry.get(&ModelId::from("qwen3-8b-q4")).unwrap();
+        assert_eq!(entry.execution_config["gpu_layers"], -1);
+        assert_eq!(entry.execution_config["flash_attention"], true);
+        assert_eq!(entry.execution_config["parallel"], 2);
+        assert_eq!(entry.execution_config["cache_type_k"], "q8_0");
+    }
+
+    #[test]
     fn parses_the_example_config() {
         let registry = ModelRegistry::from_toml_str(EXAMPLE_TOML).unwrap();
         assert_eq!(registry.len(), 3);
@@ -275,6 +306,7 @@ roles = ["coding"]
                 context_tokens: None,
                 estimated_memory_bytes: None,
                 roles: vec![],
+                execution_config: serde_json::Value::Null,
             },
             ModelEntry {
                 id: ModelId::from("a"),
@@ -284,6 +316,7 @@ roles = ["coding"]
                 context_tokens: None,
                 estimated_memory_bytes: None,
                 roles: vec![],
+                execution_config: serde_json::Value::Null,
             },
         ];
         let err = ModelRegistry::new(entries, BTreeMap::new()).unwrap_err();
@@ -318,6 +351,7 @@ roles = ["coding"]
             context_tokens: None,
             estimated_memory_bytes: None,
             roles: vec![],
+            execution_config: serde_json::Value::Null,
         };
         let registry = ModelRegistry::new(vec![entry], BTreeMap::new()).unwrap();
         let resolved = registry.resolve(&ModelId::from("local")).unwrap();

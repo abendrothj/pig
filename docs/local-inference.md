@@ -68,6 +68,15 @@ path = "/Users/you/models/Qwen3-0.6B-Q4_K_M.gguf"
 backend = "llama_cpp"
 context_tokens = 2048
 roles = ["reasoning"]
+
+# Optional: backend execution parameters passed to llama-server at load time.
+# All fields are optional; unsupported flags are silently skipped.
+[models.entries."qwen3-0.6b".execution_config]
+gpu_layers = -1          # -1 = all layers on GPU
+flash_attention = true   # significant throughput gain on CUDA and Metal
+parallel = 2             # concurrent request slots (continuous batching)
+cache_type_k = "q8_0"   # KV cache quantization: halves VRAM, negligible quality loss
+cache_type_v = "q8_0"
 ```
 
 **Model IDs containing a period must be quoted** in the TOML table header

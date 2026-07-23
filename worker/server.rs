@@ -336,6 +336,11 @@ async fn load_model(
             format!("model file not found: {}", entry.path.display()),
         );
     }
+    let execution_config = if req.execution_config.is_null() {
+        entry.execution_config.clone()
+    } else {
+        req.execution_config
+    };
     let result = state
         .runtime
         .backend()
@@ -343,7 +348,7 @@ async fn load_model(
             model_id,
             path: entry.path,
             context_size: entry.context_tokens,
-            execution_config: req.execution_config,
+            execution_config,
         })
         .await;
     match result {
@@ -407,7 +412,7 @@ fn resolve_model(
         model_id: entry.id,
         model_path: entry.path,
         context_size: entry.context_tokens,
-        execution_config: serde_json::Value::Null,
+        execution_config: entry.execution_config,
     })
 }
 

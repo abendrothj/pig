@@ -483,6 +483,7 @@ mod tests {
             context_tokens: Some(ctx),
             estimated_memory_bytes: Some(mem),
             roles: roles.to_vec(),
+            execution_config: serde_json::Value::Null,
         }
     }
 

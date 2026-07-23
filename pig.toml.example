@@ -10,6 +10,18 @@ backend = "llama_cpp"
 context_tokens = 8192
 roles = ["reasoning"]
 
+# Optional: backend execution parameters. All fields are optional.
+# gpu_layers: number of transformer layers to offload to GPU (-1 = all)
+# flash_attention: significant throughput gain on CUDA and Metal
+# parallel: concurrent request slots (continuous batching)
+# cache_type_k / cache_type_v: KV cache quantization ("q8_0" halves VRAM, minimal quality loss)
+[models.entries."qwen3-8b-q4".execution_config]
+gpu_layers = -1
+flash_attention = true
+parallel = 2
+cache_type_k = "q8_0"
+cache_type_v = "q8_0"
+
 [models.roles.reasoning]
 candidates = ["qwen3-8b-q4"]
 

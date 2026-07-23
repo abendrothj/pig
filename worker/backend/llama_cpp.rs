@@ -47,6 +47,14 @@ pub struct LlamaCppExecutionConfig {
     pub flash_attention: Option<bool>,
     pub mmap: Option<bool>,
     pub mlock: Option<bool>,
+    /// Number of parallel request slots (continuous batching). Requires a
+    /// llama-server build that advertises --parallel.
+    pub parallel: Option<u32>,
+    /// KV cache quantization type for keys, e.g. "q8_0", "q4_0", "f16".
+    /// q8_0 halves VRAM usage with negligible quality impact.
+    pub cache_type_k: Option<String>,
+    /// KV cache quantization type for values. Typically matches cache_type_k.
+    pub cache_type_v: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -204,6 +212,24 @@ impl LlamaCppBackend {
         }
         if execution.mlock == Some(true) && supports("--mlock") {
             args.push("--mlock".to_string());
+        }
+        if let Some(n) = execution.parallel {
+            if supports("--parallel") {
+                args.push("--parallel".to_string());
+                args.push(n.to_string());
+            }
+        }
+        if let Some(ref ct) = execution.cache_type_k {
+            if supports("--cache-type-k") {
+                args.push("--cache-type-k".to_string());
+                args.push(ct.clone());
+            }
+        }
+        if let Some(ref ct) = execution.cache_type_v {
+            if supports("--cache-type-v") {
+                args.push("--cache-type-v".to_string());
+                args.push(ct.clone());
+            }
         }
 
         args
@@ -798,6 +824,9 @@ mod tests {
             flash_attention: Some(true),
             mmap: Some(true),
             mlock: Some(false),
+            parallel: Some(2),
+            cache_type_k: Some("q8_0".to_string()),
+            cache_type_v: Some("q8_0".to_string()),
         };
         let value = serde_json::to_value(&cfg).unwrap();
         let back: LlamaCppExecutionConfig = serde_json::from_value(value).unwrap();
