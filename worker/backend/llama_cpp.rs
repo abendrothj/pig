@@ -237,22 +237,44 @@ impl LlamaCppBackend {
     }
 }
 
-/// Appends a reasoning control token to the last user message in-place.
-/// This is a Qwen3-specific protocol: `/think` enables chain-of-thought,
-/// `/no_think` suppresses it. Other models silently ignore the token.
+/// Injects a Qwen3 reasoning control token into the message list.
+///
+/// When the final message is a user turn, the token is appended inline — the
+/// canonical position Qwen3 is trained on. When the final message is a tool
+/// result (agentic continuation), modifying an already-sent user message would
+/// be semantically wrong; instead the token is injected via the system message
+/// so the directive applies to this completion only.
 fn apply_reasoning_mode(messages: &mut Vec<serde_json::Value>, mode: ReasoningMode) {
-    let token = match mode {
-        ReasoningMode::Enabled => " /think",
-        ReasoningMode::Disabled => " /no_think",
+    let (inline_token, system_token) = match mode {
+        ReasoningMode::Enabled => (" /think", "/think"),
+        ReasoningMode::Disabled => (" /no_think", "/no_think"),
         ReasoningMode::Auto => return,
     };
-    if let Some(last_user) = messages
-        .iter_mut()
-        .rfind(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
-    {
-        if let Some(content) = last_user.get("content").and_then(|c| c.as_str()) {
-            let new_content = format!("{}{}", content, token);
-            last_user["content"] = serde_json::json!(new_content);
+
+    let last_is_user = messages
+        .last()
+        .and_then(|m| m.get("role").and_then(|r| r.as_str()))
+        == Some("user");
+
+    if last_is_user {
+        let m = messages.last_mut().unwrap();
+        if let Some(c) = m.get("content").and_then(|c| c.as_str()) {
+            let new = format!("{}{}", c, inline_token);
+            m["content"] = serde_json::json!(new);
+        }
+    } else {
+        // Tool continuation: inject via system message to avoid retroactively
+        // modifying a historical user message.
+        if let Some(sys) = messages
+            .iter_mut()
+            .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
+        {
+            if let Some(c) = sys.get("content").and_then(|c| c.as_str()) {
+                let new = format!("{}\n{}", c, system_token);
+                sys["content"] = serde_json::json!(new);
+            }
+        } else {
+            messages.insert(0, serde_json::json!({"role": "system", "content": system_token}));
         }
     }
 }
@@ -878,6 +900,55 @@ mod tests {
         let mut msgs = openai_messages(&[ModelMessage::user("hello")]);
         apply_reasoning_mode(&mut msgs, ReasoningMode::Auto);
         assert_eq!(msgs[0]["content"], "hello");
+    }
+
+    #[test]
+    fn reasoning_mode_tool_continuation_appends_to_existing_system_message() {
+        // Agentic loop: last message is a tool result, not a user message.
+        let mut msgs = openai_messages(&[
+            ModelMessage::system("You are a coding assistant."),
+            ModelMessage::user("list files"),
+            ModelMessage {
+                role: MessageRole::Assistant,
+                content: String::new(),
+                tool_calls: vec![ModelToolCall {
+                    id: "call_1".to_string(),
+                    function: ModelToolFunction {
+                        name: "list_dir".to_string(),
+                        arguments: "{}".to_string(),
+                    },
+                }],
+                tool_call_id: None,
+            },
+            ModelMessage {
+                role: MessageRole::Tool,
+                content: r#"["src/","Cargo.toml"]"#.to_string(),
+                tool_calls: vec![],
+                tool_call_id: Some("call_1".to_string()),
+            },
+        ]);
+        apply_reasoning_mode(&mut msgs, ReasoningMode::Disabled);
+        // System message gets the token; no historical message is modified.
+        assert_eq!(msgs[0]["content"], "You are a coding assistant.\n/no_think");
+        assert_eq!(msgs[1]["content"], "list files"); // user message untouched
+    }
+
+    #[test]
+    fn reasoning_mode_tool_continuation_inserts_system_message_when_none_exists() {
+        let mut msgs = openai_messages(&[
+            ModelMessage::user("search the web"),
+            ModelMessage {
+                role: MessageRole::Tool,
+                content: "results".to_string(),
+                tool_calls: vec![],
+                tool_call_id: Some("call_2".to_string()),
+            },
+        ]);
+        apply_reasoning_mode(&mut msgs, ReasoningMode::Enabled);
+        // A system message is prepended.
+        assert_eq!(msgs[0]["role"], "system");
+        assert_eq!(msgs[0]["content"], "/think");
+        assert_eq!(msgs[1]["role"], "user");
     }
 
     #[test]

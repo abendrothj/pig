@@ -10,8 +10,8 @@ use futures::{Stream, StreamExt};
 use lao_orchestrator_core::model::{
     latest_matching_benchmark, schedule, BenchmarkFingerprint, BenchmarkSummary, FinishReason,
     ModelChunk, ModelExecutionError, ModelExecutionMetadata, ModelId, ModelInvoker, ModelRegistry,
-    ModelRequest, ModelResponse, ModelResponseStatus, ModelUsage, RoutingExplanation,
-    SchedulingOverrides, WorkerId, WorkerLocality, WorkerSnapshot,
+    ModelRequest, ModelResponse, ModelResponseStatus, ModelRole, ModelUsage, ReasoningMode,
+    RoutingExplanation, SchedulingOverrides, WorkerId, WorkerLocality, WorkerSnapshot,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -517,7 +517,7 @@ impl Coordinator {
     /// which lets reqwest close the worker connection instead of buffering output.
     pub async fn stream(
         &self,
-        request: ModelRequest,
+        mut request: ModelRequest,
     ) -> Result<ModelChunkStream, CoordinatorStreamError> {
         let snapshots = self.async_snapshots().await;
         let explanation = schedule(
@@ -546,6 +546,8 @@ impl Coordinator {
         if !request.parameters.tools.is_empty() && !snapshot.supports_tools {
             return Err(CoordinatorStreamError::ToolsUnsupported);
         }
+
+        request.parameters.reasoning_mode = resolve_reasoning_mode(&request);
 
         let mut body = serde_json::to_value(&request)
             .map_err(|error| CoordinatorStreamError::WorkerUnavailable(error.to_string()))?;
@@ -697,7 +699,7 @@ fn parse_worker_sse_frame(frame: &str) -> Option<Result<ModelChunk, String>> {
 }
 
 impl ModelInvoker for Coordinator {
-    fn invoke(&self, request: ModelRequest) -> ModelResponse {
+    fn invoke(&self, mut request: ModelRequest) -> ModelResponse {
         let explanation = self.route(&request, &SchedulingOverrides::default());
         let Some(placement) = explanation.selected else {
             return failure_response(
@@ -715,6 +717,7 @@ impl ModelInvoker for Coordinator {
                 },
             );
         };
+        request.parameters.reasoning_mode = resolve_reasoning_mode(&request);
         match self.generate_on(worker_cfg, &request) {
             Ok(response) => response,
             Err(message) => failure_response(
@@ -783,6 +786,24 @@ fn failure_response(request: &ModelRequest, error: ModelExecutionError) -> Model
     }
 }
 
+/// Resolves `ReasoningMode::Auto` to an explicit directive before the request
+/// reaches the backend. The backend translates the resolved mode to a control
+/// token; it never makes policy decisions.
+///
+/// Policy: `Reasoning` and `Coding` roles always reason. For other roles,
+/// reasoning is enabled if the request uses tools (agentic loop) and disabled
+/// otherwise (conversational, latency-sensitive).
+fn resolve_reasoning_mode(request: &ModelRequest) -> ReasoningMode {
+    if request.parameters.reasoning_mode != ReasoningMode::Auto {
+        return request.parameters.reasoning_mode;
+    }
+    match request.role {
+        ModelRole::Reasoning | ModelRole::Coding => ReasoningMode::Enabled,
+        _ if !request.parameters.tools.is_empty() => ReasoningMode::Enabled,
+        _ => ReasoningMode::Disabled,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -848,6 +869,53 @@ auth_token_env = "LAO_LINUX_WORKER_TOKEN"
             response.error,
             Some(ModelExecutionError::NoEligibleWorker { .. })
         ));
+    }
+
+    fn reasoning_request(role: ModelRole, tools: Vec<serde_json::Value>, mode: ReasoningMode) -> ModelRequest {
+        use lao_orchestrator_core::model::{GenerationParameters, ModelMessage, ModelRequirements, RequestId};
+        ModelRequest {
+            request_id: RequestId::generate(),
+            role,
+            model: None,
+            messages: vec![ModelMessage::user("hi")],
+            parameters: GenerationParameters {
+                reasoning_mode: mode,
+                tools,
+                ..Default::default()
+            },
+            requirements: ModelRequirements::default(),
+            inputs: vec![],
+            metadata: Default::default(),
+        }
+    }
+
+    #[test]
+    fn resolve_auto_reasoning_role_enables_for_reasoning_and_coding() {
+        let r = reasoning_request(ModelRole::Reasoning, vec![], ReasoningMode::Auto);
+        assert_eq!(resolve_reasoning_mode(&r), ReasoningMode::Enabled);
+        let r = reasoning_request(ModelRole::Coding, vec![], ReasoningMode::Auto);
+        assert_eq!(resolve_reasoning_mode(&r), ReasoningMode::Enabled);
+    }
+
+    #[test]
+    fn resolve_auto_reasoning_with_tools_enables_for_any_role() {
+        let tool = serde_json::json!({"type": "function", "function": {"name": "search", "parameters": {}}});
+        let r = reasoning_request(ModelRole::Summarization, vec![tool], ReasoningMode::Auto);
+        assert_eq!(resolve_reasoning_mode(&r), ReasoningMode::Enabled);
+    }
+
+    #[test]
+    fn resolve_auto_reasoning_disables_for_other_roles_without_tools() {
+        let r = reasoning_request(ModelRole::Summarization, vec![], ReasoningMode::Auto);
+        assert_eq!(resolve_reasoning_mode(&r), ReasoningMode::Disabled);
+    }
+
+    #[test]
+    fn resolve_reasoning_pass_through_explicit_modes() {
+        let r = reasoning_request(ModelRole::Reasoning, vec![], ReasoningMode::Disabled);
+        assert_eq!(resolve_reasoning_mode(&r), ReasoningMode::Disabled);
+        let r = reasoning_request(ModelRole::Summarization, vec![], ReasoningMode::Enabled);
+        assert_eq!(resolve_reasoning_mode(&r), ReasoningMode::Enabled);
     }
 
     #[test]
