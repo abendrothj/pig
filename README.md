@@ -21,10 +21,20 @@ pig coordinator serve   →   routes to   →   pig worker serve (llama.cpp)
 
 See [docs/architecture.md](docs/architecture.md) for internals.
 
-## Build
+## Install
+
+**From a release tarball** (recommended):
+
+```bash
+tar xzf pig-0.5.0-aarch64-apple-darwin.tar.gz
+cp pig-0.5.0-aarch64-apple-darwin/bin/pig /usr/local/bin/
+```
+
+**From source:**
 
 ```bash
 cargo build --release
+# binary at target/release/pig
 ```
 
 ## Quick start

@@ -8,6 +8,7 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(name = "pig")]
 #[command(about = "Private Inference Gateway CLI", long_about = None)]
+#[command(version)]
 struct Cli {
     /// Coordinator profile from [profiles.<name>] in pig.toml. Omit to preserve
     /// the existing embedded coordinator behavior.
@@ -144,25 +145,25 @@ enum ModelsAction {
     },
     /// Run a direct generation request
     Generate {
-        #[arg(long, help = "Model role, e.g. reasoning, coding")]
+        #[arg(long, help = "Model role, e.g. reasoning, coding, verification")]
         role: Option<String>,
-        #[arg(long, help = "Direct model id/alias, overrides --role resolution")]
+        #[arg(long, help = "Specific model id or alias — overrides --role")]
         model: Option<String>,
-        #[arg(long)]
+        #[arg(long, help = "Prompt text to send")]
         prompt: String,
-        #[arg(long)]
+        #[arg(long, help = "System message prepended to the conversation")]
         system: Option<String>,
-        #[arg(long)]
+        #[arg(long, help = "Maximum tokens to generate")]
         max_tokens: Option<u32>,
-        #[arg(long)]
+        #[arg(long, help = "Sampling temperature (0.0–2.0)")]
         temperature: Option<f32>,
         #[arg(long, help = "Emit the full structured ModelResponse as JSON")]
         json: bool,
-        #[arg(long, help = "Stream tokens as they are generated (interactive use)")]
+        #[arg(long, help = "Stream tokens as they are generated")]
         stream: bool,
-        #[arg(long)]
+        #[arg(long, help = "Pin the request to a specific worker id")]
         force_worker: Option<String>,
-        #[arg(long)]
+        #[arg(long, help = "Require CPU execution even if an accelerator is available")]
         force_cpu: bool,
     },
     /// Run a short benchmark prompt against a model and record the result

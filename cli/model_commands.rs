@@ -105,7 +105,10 @@ pub fn worker_serve(config: Option<String>) {
     let worker_config = match pig_worker::config::WorkerConfig::load(std::path::Path::new(&path)) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("[ERROR] {}", e);
+            eprintln!("[ERROR] {e}");
+            if std::path::Path::new("pig.toml.example").exists() {
+                eprintln!("hint: copy pig.toml.example to pig.toml and fill in your worker and model paths");
+            }
             std::process::exit(1);
         }
     };
