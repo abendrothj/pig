@@ -3,12 +3,13 @@
 //! the same `lao.toml` resolution `TrustPolicy` already uses (`LAO_CONFIG`, else
 //! `lao.toml`, else `config/lao.toml`), rather than inventing a parallel convention.
 
+use crate::profiles::Profile;
 use lao_orchestrator_core::model::{
     load_benchmark_records, record_benchmark, BenchmarkFingerprint, BenchmarkFreshness,
-    BenchmarkRecord, CoordinatorMetricsSnapshot, GenerationParameters, MessageRole, ModelId,
-    ModelInvoker, ModelLoadState, ModelMessage, ModelRegistry, ModelRequest, ModelRequirements,
-    ModelRole, ModelSelector, RequestId, SchedulingOverrides, WorkerLifecycleState,
-    WorkerMetricsSnapshot, METRICS_SCHEMA_VERSION,
+    BenchmarkRecord, CoordinatorMetricsSnapshot, GenerationParameters, MessageRole, ModelChunk,
+    ModelId, ModelInvoker, ModelLoadState, ModelMessage, ModelRegistry, ModelRequest,
+    ModelRequirements, ModelRole, ModelSelector, RequestId, SchedulingOverrides,
+    WorkerLifecycleState, WorkerMetricsSnapshot, METRICS_SCHEMA_VERSION,
 };
 use lao_worker::coordinator::{Coordinator, WorkerEndpointConfig, WorkersConfig};
 use std::collections::BTreeMap;
@@ -32,6 +33,45 @@ fn config_text() -> String {
     config_path()
         .and_then(|p| std::fs::read_to_string(p).ok())
         .unwrap_or_default()
+}
+
+pub fn resolve_profile(name: Option<&str>) -> Profile {
+    match crate::profiles::selected(name, &config_text()) {
+        Ok(profile) => profile,
+        Err(e) => {
+            eprintln!("[ERROR] {}", e);
+            std::process::exit(2);
+        }
+    }
+}
+
+fn remote_request(
+    profile: &Profile,
+    method: reqwest::blocking::RequestBuilder,
+) -> Result<reqwest::blocking::RequestBuilder, String> {
+    let Some((_url, token_env)) = profile.remote() else {
+        return Err("selected profile is not remote".to_string());
+    };
+    Ok(match token_env {
+        Some(var) => method.bearer_auth(std::env::var(var).map_err(|_| {
+            format!(
+                "coordinator token environment variable '{}' is not set",
+                var
+            )
+        })?),
+        None => method,
+    })
+}
+
+fn remote_url(profile: &Profile, path: &str) -> Result<String, String> {
+    let Some((base, _)) = profile.remote() else {
+        return Err("selected profile is not remote".to_string());
+    };
+    Ok(format!(
+        "{}/{}",
+        base.trim_end_matches('/'),
+        path.trim_start_matches('/')
+    ))
 }
 
 fn load_registry() -> ModelRegistry {
@@ -163,14 +203,42 @@ pub fn worker_serve(config: Option<String>) {
 // workers
 // ---------------------------------------------------------------------------
 
-pub fn workers_list(json: bool) {
+pub fn workers_list(json: bool, profile: &Profile) {
+    if profile.remote().is_some() {
+        let client = reqwest::blocking::Client::new();
+        let response = remote_request(
+            profile,
+            client.get(remote_url(profile, "/v1/workers").unwrap()),
+        )
+        .and_then(|request| request.send().map_err(|e| e.to_string()))
+        .and_then(|response| response.error_for_status().map_err(|e| e.to_string()));
+        let snapshots: Vec<lao_orchestrator_core::model::WorkerSnapshot> = match response {
+            Ok(response) => match response.json() {
+                Ok(value) => value,
+                Err(e) => {
+                    eprintln!("[ERROR] malformed coordinator response: {}", e);
+                    std::process::exit(1);
+                }
+            },
+            Err(e) => {
+                eprintln!("[ERROR] remote coordinator unavailable: {}", e);
+                std::process::exit(1);
+            }
+        };
+        print_snapshots(&snapshots, json);
+        return;
+    }
     let workers = load_workers();
     let coordinator = Coordinator::new(workers.clone(), load_registry());
     let snapshots = coordinator.snapshots();
+    print_snapshots(&snapshots, json);
+}
+
+fn print_snapshots(snapshots: &[lao_orchestrator_core::model::WorkerSnapshot], json: bool) {
     if json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&snapshot_json(&snapshots)).unwrap_or_default()
+            serde_json::to_string_pretty(&snapshot_json(snapshots)).unwrap_or_default()
         );
         return;
     }
@@ -178,7 +246,7 @@ pub fn workers_list(json: bool) {
         println!("No workers configured.");
         return;
     }
-    for s in &snapshots {
+    for s in snapshots {
         println!(
             "- {} [{}] backend={} healthy={} queue={}/{} active={}",
             s.worker_id,
@@ -192,8 +260,11 @@ pub fn workers_list(json: bool) {
     }
 }
 
-pub fn workers_health(json: bool) {
-    workers_list(json);
+pub fn workers_health(json: bool, profile: &Profile) {
+    workers_list(json, profile);
+    if profile.remote().is_some() {
+        return;
+    }
     let workers = load_workers();
     let coordinator = Coordinator::new(workers, load_registry());
     if coordinator.snapshots().iter().any(|s| !s.healthy) {
@@ -201,7 +272,37 @@ pub fn workers_health(json: bool) {
     }
 }
 
-pub fn workers_inspect(worker_id: String, json: bool) {
+pub fn workers_inspect(worker_id: String, json: bool, profile: &Profile) {
+    if profile.remote().is_some() {
+        let client = reqwest::blocking::Client::new();
+        let response = remote_request(
+            profile,
+            client.get(remote_url(profile, "/v1/workers").unwrap()),
+        )
+        .and_then(|request| request.send().map_err(|e| e.to_string()))
+        .and_then(|response| response.error_for_status().map_err(|e| e.to_string()));
+        let snapshots: Vec<lao_orchestrator_core::model::WorkerSnapshot> =
+            match response.and_then(|r| r.json().map_err(|e| e.to_string())) {
+                Ok(value) => value,
+                Err(e) => {
+                    eprintln!("[ERROR] remote coordinator unavailable: {}", e);
+                    std::process::exit(1);
+                }
+            };
+        let Some(snapshot) = snapshots.into_iter().find(|s| s.worker_id.0 == worker_id) else {
+            eprintln!("[ERROR] unknown worker '{}'", worker_id);
+            std::process::exit(1);
+        };
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&snapshot_json(&[snapshot])).unwrap_or_default()
+            );
+        } else {
+            println!("{:#?}", snapshot);
+        }
+        return;
+    }
     let workers = load_workers();
     let coordinator = Coordinator::new(workers, load_registry());
     let Some(snapshot) = coordinator
@@ -243,7 +344,11 @@ fn snapshot_json(snapshots: &[lao_orchestrator_core::model::WorkerSnapshot]) -> 
 /// (`coordinator.snapshots()`, the same `worker_metrics()` client used for the
 /// single-worker case, and the existing benchmark-history functions) - not a new
 /// aggregation framework, just summing numbers that are already computed somewhere.
-pub fn workers_metrics(worker_id: Option<String>, json: bool) {
+pub fn workers_metrics(worker_id: Option<String>, json: bool, profile: &Profile) {
+    if profile.remote().is_some() {
+        eprintln!("[ERROR] remote coordinator metrics aggregation is not implemented; query the coordinator's /v1/metrics when it is added");
+        std::process::exit(1);
+    }
     let workers = load_workers();
     let coordinator = Coordinator::new(workers, load_registry());
 
@@ -634,11 +739,15 @@ pub fn models_generate(
         messages.push(ModelMessage {
             role: MessageRole::System,
             content: s,
+            tool_calls: vec![],
+            tool_call_id: None,
         });
     }
     messages.push(ModelMessage {
         role: MessageRole::User,
         content: prompt,
+        tool_calls: vec![],
+        tool_call_id: None,
     });
 
     let request = ModelRequest {
@@ -745,8 +854,8 @@ fn stream_generate(target: &WorkerEndpointConfig, request: &ModelRequest) {
     }
     // Real SSE wire format (axum's Event::default().event(name).data(payload)): the
     // event name and payload arrive on separate lines within one event block, and the
-    // "token" payload is the raw generated text, not a JSON envelope. A blank line
-    // ends the block. Only the "response" event's payload is JSON.
+    // "chunk" payloads are canonical JSON ModelChunk values. A blank line ends an
+    // event block; the final worker response is deliberately ignored here.
     let reader = BufReader::new(response);
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
@@ -757,9 +866,11 @@ fn stream_generate(target: &WorkerEndpointConfig, request: &ModelRequest) {
             continue;
         }
         if let Some(payload) = line.strip_prefix("data: ") {
-            if current_event.as_deref() == Some("token") {
-                let _ = write!(out, "{}", payload);
-                let _ = out.flush();
+            if current_event.as_deref() == Some("chunk") {
+                if let Ok(ModelChunk::TextDelta { text }) = serde_json::from_str(payload) {
+                    let _ = write!(out, "{}", text);
+                    let _ = out.flush();
+                }
             }
             continue;
         }
@@ -789,6 +900,8 @@ pub fn models_benchmark(model_id: String, worker: Option<String>, json: bool) {
         messages: vec![ModelMessage {
             role: MessageRole::User,
             content: "Reply with a short, one-sentence greeting.".to_string(),
+            tool_calls: vec![],
+            tool_call_id: None,
         }],
         parameters: GenerationParameters {
             max_tokens: Some(64),
@@ -870,11 +983,7 @@ pub fn models_benchmark(model_id: String, worker: Option<String>, json: bool) {
 // route
 // ---------------------------------------------------------------------------
 
-pub fn route_explain(role: Option<String>, model: Option<String>, json: bool) {
-    let workers = require_workers();
-    let registry = load_registry();
-    let coordinator = Coordinator::new(workers, registry.clone());
-
+pub fn route_explain(role: Option<String>, model: Option<String>, json: bool, profile: &Profile) {
     let request = ModelRequest {
         request_id: RequestId::generate(),
         role: role
@@ -885,13 +994,36 @@ pub fn route_explain(role: Option<String>, model: Option<String>, json: bool) {
         messages: vec![ModelMessage {
             role: MessageRole::User,
             content: "explain".to_string(),
+            tool_calls: vec![],
+            tool_call_id: None,
         }],
         parameters: GenerationParameters::default(),
         requirements: ModelRequirements::default(),
         inputs: vec![],
         metadata: BTreeMap::new(),
     };
-    let explanation = coordinator.route(&request, &SchedulingOverrides::default());
+    let explanation = if profile.remote().is_some() {
+        let client = reqwest::blocking::Client::new();
+        match remote_request(
+            profile,
+            client
+                .post(remote_url(profile, "/v1/route").unwrap())
+                .json(&request),
+        )
+        .and_then(|request| request.send().map_err(|e| e.to_string()))
+        .and_then(|response| response.error_for_status().map_err(|e| e.to_string()))
+        .and_then(|response| response.json().map_err(|e| e.to_string()))
+        {
+            Ok(explanation) => explanation,
+            Err(e) => {
+                eprintln!("[ERROR] remote coordinator unavailable: {}", e);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        let coordinator = Coordinator::new(require_workers(), load_registry());
+        coordinator.route(&request, &SchedulingOverrides::default())
+    };
     if json {
         println!(
             "{}",
@@ -926,7 +1058,33 @@ fn explanation_json(
 // jobs
 // ---------------------------------------------------------------------------
 
-pub fn jobs_list(worker: String, json: bool) {
+pub fn jobs_list(worker: String, json: bool, profile: &Profile) {
+    if profile.remote().is_some() {
+        let client = reqwest::blocking::Client::new();
+        let url = format!(
+            "{}?worker={}",
+            remote_url(profile, "/v1/jobs").unwrap(),
+            worker
+        );
+        let result = remote_request(profile, client.get(url))
+            .and_then(|request| request.send().map_err(|e| e.to_string()))
+            .and_then(|response| response.error_for_status().map_err(|e| e.to_string()))
+            .and_then(|response| response.text().map_err(|e| e.to_string()));
+        match result {
+            Ok(text) => {
+                if json {
+                    println!("{}", text);
+                } else {
+                    print_jobs(&text);
+                }
+            }
+            Err(e) => {
+                eprintln!("[ERROR] remote coordinator unavailable: {}", e);
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     let workers = require_workers();
     let target = resolve_target_worker(&workers, Some(worker));
     let client = reqwest::blocking::Client::new();
@@ -936,17 +1094,7 @@ pub fn jobs_list(worker: String, json: bool) {
             if json {
                 println!("{}", text);
             } else {
-                let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
-                for job in parsed.as_array().cloned().unwrap_or_default() {
-                    println!(
-                        "- {} status={} request={}",
-                        job.get("job_id").and_then(|v| v.as_str()).unwrap_or("?"),
-                        job.get("status").and_then(|v| v.as_str()).unwrap_or("?"),
-                        job.get("request_id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("?"),
-                    );
-                }
+                print_jobs(&text);
             }
         }
         Err(e) => {
@@ -956,7 +1104,48 @@ pub fn jobs_list(worker: String, json: bool) {
     }
 }
 
-pub fn jobs_inspect(job_id: String, worker: String, json: bool) {
+fn print_jobs(text: &str) {
+    let parsed: serde_json::Value = serde_json::from_str(text).unwrap_or_default();
+    for job in parsed.as_array().cloned().unwrap_or_default() {
+        println!(
+            "- {} status={} request={}",
+            job.get("job_id").and_then(|v| v.as_str()).unwrap_or("?"),
+            job.get("status").and_then(|v| v.as_str()).unwrap_or("?"),
+            job.get("request_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?")
+        );
+    }
+}
+
+pub fn jobs_inspect(job_id: String, worker: String, json: bool, profile: &Profile) {
+    if profile.remote().is_some() {
+        let client = reqwest::blocking::Client::new();
+        let url = format!(
+            "{}?worker={}",
+            remote_url(profile, &format!("/v1/jobs/{}", job_id)).unwrap(),
+            worker
+        );
+        let result = remote_request(profile, client.get(url))
+            .and_then(|request| request.send().map_err(|e| e.to_string()))
+            .and_then(|response| response.error_for_status().map_err(|e| e.to_string()))
+            .and_then(|response| response.text().map_err(|e| e.to_string()));
+        match result {
+            Ok(text) => {
+                if json {
+                    let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+                    println!("{}", serde_json::to_string_pretty(&parsed).unwrap_or(text));
+                } else {
+                    println!("{}", text);
+                }
+            }
+            Err(e) => {
+                eprintln!("[ERROR] remote coordinator unavailable: {}", e);
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     let workers = require_workers();
     let target = resolve_target_worker(&workers, Some(worker));
     let client = reqwest::blocking::Client::new();
@@ -986,7 +1175,26 @@ pub fn jobs_inspect(job_id: String, worker: String, json: bool) {
     }
 }
 
-pub fn jobs_cancel(job_id: String, worker: String) {
+pub fn jobs_cancel(job_id: String, worker: String, profile: &Profile) {
+    if profile.remote().is_some() {
+        let client = reqwest::blocking::Client::new();
+        let url = format!(
+            "{}?worker={}",
+            remote_url(profile, &format!("/v1/jobs/{}/cancel", job_id)).unwrap(),
+            worker
+        );
+        match remote_request(profile, client.post(url))
+            .and_then(|request| request.send().map_err(|e| e.to_string()))
+            .and_then(|response| response.error_for_status().map_err(|e| e.to_string()))
+        {
+            Ok(_) => println!("Cancellation requested."),
+            Err(e) => {
+                eprintln!("[ERROR] remote coordinator unavailable: {}", e);
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     let workers = require_workers();
     let target = resolve_target_worker(&workers, Some(worker));
     let client = reqwest::blocking::Client::new();

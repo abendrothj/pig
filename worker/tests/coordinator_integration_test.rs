@@ -192,3 +192,97 @@ async fn route_explanation_names_the_selected_worker_before_generation() {
     assert_eq!(selected.worker_id.0, "w1");
     assert_eq!(selected.model_id.0, "m1");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn coordinator_server_health_reports_worker_counts() {
+    let worker_url = spawn_worker("ws1").await;
+    let (registry, _) = model_registry_with_local_entry();
+
+    // reqwest::blocking::Client::builder().build() panics when called from within a
+    // tokio async context — spawn_blocking lets reqwest initialize on a blocking thread.
+    let coordinator = tokio::task::spawn_blocking(move || {
+        Arc::new(Coordinator::new(
+            vec![WorkerEndpointConfig {
+                id: "ws1".to_string(),
+                url: worker_url,
+                auth_token_env: None,
+                priority: 0,
+            }],
+            registry,
+        ))
+    })
+    .await
+    .unwrap();
+
+    let std_listener = StdTcpListener::bind("127.0.0.1:0").unwrap();
+    std_listener.set_nonblocking(true).unwrap();
+    let coord_addr = std_listener.local_addr().unwrap();
+    let state = Arc::new(lao_worker::coordinator_server::CoordinatorServerState::new(
+        coordinator,
+        None,
+    ));
+    let app = lao_worker::coordinator_server::router(state);
+    let listener = tokio::net::TcpListener::from_std(std_listener).unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.ok();
+    });
+
+    let coord_url = format!("http://{}", coord_addr);
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{}/v1/health", coord_url))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["workers_total"], 1);
+    assert_eq!(body["workers_healthy"], 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn coordinator_server_generate_routes_through_to_worker() {
+    let worker_url = spawn_worker("ws2").await;
+    let (registry, _) = model_registry_with_local_entry();
+
+    let coordinator = tokio::task::spawn_blocking(move || {
+        Arc::new(Coordinator::new(
+            vec![WorkerEndpointConfig {
+                id: "ws2".to_string(),
+                url: worker_url,
+                auth_token_env: None,
+                priority: 0,
+            }],
+            registry,
+        ))
+    })
+    .await
+    .unwrap();
+
+    let std_listener = StdTcpListener::bind("127.0.0.1:0").unwrap();
+    std_listener.set_nonblocking(true).unwrap();
+    let coord_addr = std_listener.local_addr().unwrap();
+    let state = Arc::new(lao_worker::coordinator_server::CoordinatorServerState::new(
+        coordinator,
+        None,
+    ));
+    let app = lao_worker::coordinator_server::router(state);
+    let listener = tokio::net::TcpListener::from_std(std_listener).unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.ok();
+    });
+
+    let coord_url = format!("http://{}", coord_addr);
+    let client = reqwest::Client::new();
+    let req = request();
+    let resp = client
+        .post(format!("{}/v1/generate", coord_url))
+        .json(&req)
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+    let response: lao_orchestrator_core::model::ModelResponse = resp.json().await.unwrap();
+    assert_eq!(response.status, ModelResponseStatus::Success);
+    assert_eq!(response.execution.worker_id.0, "ws2");
+}

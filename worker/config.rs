@@ -100,6 +100,12 @@ fn default_shutdown_grace_seconds() -> u64 {
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkerConfig {
     pub id: String,
+    /// Optional operator-declared owner of this worker pool. This is advisory only:
+    /// the worker remains safe under multiple coordinators because admission is
+    /// atomic locally, but status can make accidental competing control planes
+    /// visible before they waste routing decisions.
+    #[serde(default)]
+    pub coordinator_id: Option<String>,
     #[serde(default = "default_bind")]
     pub bind: String,
     #[serde(default = "default_max_concurrent_jobs")]
@@ -193,6 +199,7 @@ mod tests {
     const EXAMPLE: &str = r#"
 [worker]
 id = "macbook-worker"
+coordinator_id = "spectre-coordinator"
 bind = "127.0.0.1:9847"
 max_concurrent_jobs = 1
 max_queued_jobs = 16
@@ -212,6 +219,7 @@ request_timeout_seconds = 600
     fn parses_the_example_config() {
         let cfg = WorkerConfig::from_toml_str(EXAMPLE).unwrap();
         assert_eq!(cfg.id, "macbook-worker");
+        assert_eq!(cfg.coordinator_id.as_deref(), Some("spectre-coordinator"));
         assert_eq!(cfg.max_concurrent_jobs, 1);
         assert!(cfg.runtime.llama_cpp.enabled);
         assert_eq!(cfg.runtime.llama_cpp.server_executable, "llama-server");
@@ -224,6 +232,7 @@ request_timeout_seconds = 600
         assert_eq!(cfg.max_concurrent_jobs, 1);
         assert_eq!(cfg.max_queued_jobs, 16);
         assert!(!cfg.auth.enabled);
+        assert_eq!(cfg.coordinator_id, None);
     }
 
     #[test]

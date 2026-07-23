@@ -5,6 +5,8 @@
 pub mod backend;
 pub mod config;
 pub mod coordinator;
+pub mod coordinator_server;
+pub(crate) mod defer_drop;
 pub mod hardware;
 pub mod job;
 pub mod server;

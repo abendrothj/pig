@@ -5,16 +5,41 @@
 //! no nested tokio runtime, no need for the workflow engine to know anything async
 //! exists.
 
+use crate::defer_drop::DeferDrop;
+use futures::{Stream, StreamExt};
 use lao_orchestrator_core::model::{
     latest_matching_benchmark, schedule, BenchmarkFingerprint, BenchmarkSummary, FinishReason,
-    ModelExecutionError, ModelExecutionMetadata, ModelId, ModelInvoker, ModelRegistry,
+    ModelChunk, ModelExecutionError, ModelExecutionMetadata, ModelId, ModelInvoker, ModelRegistry,
     ModelRequest, ModelResponse, ModelResponseStatus, ModelUsage, RoutingExplanation,
     SchedulingOverrides, WorkerId, WorkerLocality, WorkerSnapshot,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::pin::Pin;
 use std::time::Duration;
+
+pub type ModelChunkStream = Pin<Box<dyn Stream<Item = Result<ModelChunk, String>> + Send>>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CoordinatorStreamError {
+    NoEligibleWorker(String),
+    WorkerUnavailable(String),
+    ToolsUnsupported,
+}
+
+impl std::fmt::Display for CoordinatorStreamError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoEligibleWorker(reason) => write!(f, "no eligible worker: {}", reason),
+            Self::WorkerUnavailable(reason) => write!(f, "worker unavailable: {}", reason),
+            Self::ToolsUnsupported => write!(
+                f,
+                "the selected LAO worker cannot honor requested tool calling"
+            ),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkerEndpointConfig {
@@ -65,7 +90,8 @@ fn is_loopback_or_private(url: &str) -> bool {
 pub struct Coordinator {
     workers: Vec<WorkerEndpointConfig>,
     registry: ModelRegistry,
-    client: reqwest::blocking::Client,
+    client: DeferDrop<reqwest::blocking::Client>,
+    async_client: reqwest::Client,
 }
 
 impl Coordinator {
@@ -78,7 +104,12 @@ impl Coordinator {
         Self {
             workers,
             registry,
-            client,
+            client: DeferDrop::new(client),
+            async_client: reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(5))
+                .timeout(Duration::from_secs(600))
+                .build()
+                .expect("reqwest async client builds with static config"),
         }
     }
 
@@ -107,6 +138,7 @@ impl Coordinator {
             max_queued_jobs: 0,
             available_memory_bytes: None,
             supports_streaming: false,
+            supports_tools: false,
             locality: WorkerLocality::Remote,
             benchmarks: BTreeMap::new(),
             priority: worker.priority,
@@ -165,6 +197,10 @@ impl Coordinator {
             .unwrap_or_default();
         let supports_streaming = backend_obj
             .get("supports_streaming")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let supports_tools = backend_obj
+            .get("supports_tools")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         let max_queued_jobs = caps
@@ -249,6 +285,7 @@ impl Coordinator {
             max_queued_jobs,
             available_memory_bytes: None,
             supports_streaming,
+            supports_tools,
             locality,
             benchmarks,
             priority: worker.priority,
@@ -261,6 +298,189 @@ impl Coordinator {
         self.workers.iter().map(|w| self.snapshot(w)).collect()
     }
 
+    /// Async-native discovery for the long-running server. The embedded workflow
+    /// path deliberately remains synchronous because it implements ModelInvoker.
+    /// Scheduling itself remains the pure `schedule(&[WorkerSnapshot])` function.
+    pub async fn async_snapshots(&self) -> Vec<WorkerSnapshot> {
+        let mut snapshots = Vec::with_capacity(self.workers.len());
+        for worker in &self.workers {
+            snapshots.push(self.async_snapshot(worker).await);
+        }
+        snapshots
+    }
+
+    async fn async_snapshot(&self, worker: &WorkerEndpointConfig) -> WorkerSnapshot {
+        let unhealthy = || WorkerSnapshot {
+            worker_id: WorkerId::from(worker.id.clone()),
+            healthy: false,
+            backend: "unknown".to_string(),
+            backend_version: None,
+            backend_healthy: false,
+            worker_hardware_fingerprint: None,
+            accelerators: vec![],
+            loaded_models: vec![],
+            known_models: vec![],
+            queue_depth: 0,
+            active_jobs: 0,
+            max_queued_jobs: 0,
+            available_memory_bytes: None,
+            supports_streaming: false,
+            supports_tools: false,
+            locality: WorkerLocality::Remote,
+            benchmarks: BTreeMap::new(),
+            priority: worker.priority,
+        };
+        let mut health_request = self.async_client.get(format!("{}/v1/health", worker.url));
+        if let Some(token) = self.auth_header(worker) {
+            health_request = health_request.bearer_auth(token);
+        }
+        let health: serde_json::Value = match health_request
+            .send()
+            .await
+            .and_then(|r| r.error_for_status())
+        {
+            Ok(response) => match response.json().await {
+                Ok(value) => value,
+                Err(_) => return unhealthy(),
+            },
+            Err(_) => return unhealthy(),
+        };
+        let mut caps_request = self
+            .async_client
+            .get(format!("{}/v1/capabilities", worker.url));
+        if let Some(token) = self.auth_header(worker) {
+            caps_request = caps_request.bearer_auth(token);
+        }
+        let caps: serde_json::Value =
+            match caps_request.send().await.and_then(|r| r.error_for_status()) {
+                Ok(response) => match response.json().await {
+                    Ok(value) => value,
+                    Err(_) => return unhealthy(),
+                },
+                Err(_) => return unhealthy(),
+            };
+        let backend_obj = caps
+            .get("backend")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let backend = backend_obj
+            .get("backend")
+            .and_then(|value| value.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let backend_version = backend_obj
+            .get("version")
+            .and_then(|value| value.as_str())
+            .map(str::to_string);
+        let accelerators: Vec<lao_orchestrator_core::model::AcceleratorKind> = backend_obj
+            .get("accelerators")
+            .and_then(|value| value.as_array())
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(|value| value.as_str())
+                    .filter_map(parse_accelerator)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let known_models: Vec<ModelId> = caps
+            .get("known_models")
+            .and_then(|value| value.as_array())
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(|value| value.as_str())
+                    .map(ModelId::from)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let hardware_fp = caps.get("hardware").map(|hardware| {
+            lao_orchestrator_core::model::worker_hardware_fingerprint(
+                hardware
+                    .get("os")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("unknown"),
+                hardware
+                    .get("arch")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("unknown"),
+                hardware
+                    .get("hostname")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("unknown"),
+            )
+        });
+        let worker_id = WorkerId::from(worker.id.clone());
+        let benchmarks = known_models
+            .iter()
+            .filter_map(|model_id| {
+                let entry = self.registry.get(model_id)?;
+                let fingerprint = BenchmarkFingerprint {
+                    model_id: model_id.clone(),
+                    model_file_size_bytes: std::fs::metadata(&entry.path)
+                        .ok()
+                        .map(|metadata| metadata.len()),
+                    model_file_hash: None,
+                    backend: backend.clone(),
+                    backend_version: backend_version.clone(),
+                    worker_hardware_fingerprint: hardware_fp.clone()?,
+                    accelerator: accelerators.first().copied(),
+                    context_tokens: entry.context_tokens,
+                    gpu_layers: None,
+                    cpu_threads: None,
+                    batch_size: None,
+                };
+                let record = latest_matching_benchmark(model_id, &worker_id, &fingerprint)?;
+                Some((
+                    model_id.clone(),
+                    BenchmarkSummary {
+                        prompt_tokens_per_second: record.prompt_tokens_per_second,
+                        generation_tokens_per_second: record.generation_tokens_per_second,
+                    },
+                ))
+            })
+            .collect();
+        WorkerSnapshot {
+            worker_id,
+            healthy: health.get("status").and_then(|value| value.as_str()) == Some("ok"),
+            backend,
+            backend_version,
+            backend_healthy: !backend_obj.is_null(),
+            worker_hardware_fingerprint: hardware_fp,
+            accelerators,
+            loaded_models: vec![],
+            known_models,
+            queue_depth: health
+                .get("queued_jobs")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(0) as usize,
+            active_jobs: health
+                .get("active_jobs")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(0) as usize,
+            max_queued_jobs: caps
+                .get("max_queued_jobs")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(0) as usize,
+            available_memory_bytes: None,
+            supports_streaming: backend_obj
+                .get("supports_streaming")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false),
+            supports_tools: backend_obj
+                .get("supports_tools")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false),
+            locality: if is_loopback_or_private(&worker.url) {
+                WorkerLocality::Local
+            } else {
+                WorkerLocality::Remote
+            },
+            benchmarks,
+            priority: worker.priority,
+        }
+    }
+
     pub fn route(
         &self,
         request: &ModelRequest,
@@ -268,6 +488,88 @@ impl Coordinator {
     ) -> RoutingExplanation {
         let snapshots = self.snapshots();
         schedule(request, &self.registry, &snapshots, overrides)
+    }
+
+    /// Tool compatibility is a worker capability, not an OpenAI-gateway guess.
+    /// Reuse the existing scheduler decision rather than adding a second placement
+    /// policy at the protocol boundary.
+    pub fn selected_worker_supports_tools(&self, request: &ModelRequest) -> bool {
+        let snapshots = self.snapshots();
+        let route = schedule(
+            request,
+            &self.registry,
+            &snapshots,
+            &SchedulingOverrides::default(),
+        );
+        route
+            .selected
+            .and_then(|placement| {
+                snapshots
+                    .iter()
+                    .find(|snapshot| snapshot.worker_id == placement.worker_id)
+            })
+            .map(|snapshot| snapshot.supports_tools)
+            .unwrap_or(false)
+    }
+
+    /// Route and relay a worker's canonical stream without translating it into a
+    /// client protocol. Dropping the returned stream drops the upstream HTTP body,
+    /// which lets reqwest close the worker connection instead of buffering output.
+    pub async fn stream(
+        &self,
+        request: ModelRequest,
+    ) -> Result<ModelChunkStream, CoordinatorStreamError> {
+        let snapshots = self.async_snapshots().await;
+        let explanation = schedule(
+            &request,
+            &self.registry,
+            &snapshots,
+            &SchedulingOverrides::default(),
+        );
+        let placement = explanation
+            .selected
+            .clone()
+            .ok_or_else(|| CoordinatorStreamError::NoEligibleWorker(explanation.to_string()))?;
+        let worker = self
+            .workers
+            .iter()
+            .find(|worker| worker.id == placement.worker_id.0)
+            .ok_or_else(|| {
+                CoordinatorStreamError::WorkerUnavailable(placement.worker_id.0.clone())
+            })?;
+        let snapshot = snapshots
+            .iter()
+            .find(|snapshot| snapshot.worker_id == placement.worker_id)
+            .ok_or_else(|| {
+                CoordinatorStreamError::WorkerUnavailable(placement.worker_id.0.clone())
+            })?;
+        if !request.parameters.tools.is_empty() && !snapshot.supports_tools {
+            return Err(CoordinatorStreamError::ToolsUnsupported);
+        }
+
+        let mut body = serde_json::to_value(&request)
+            .map_err(|error| CoordinatorStreamError::WorkerUnavailable(error.to_string()))?;
+        if let Some(map) = body.as_object_mut() {
+            map.insert("stream".to_string(), serde_json::Value::Bool(true));
+        }
+        let mut http_request = self
+            .async_client
+            .post(format!("{}/v1/generate", worker.url.trim_end_matches('/')))
+            .json(&body);
+        if let Some(token) = self.auth_header(worker) {
+            http_request = http_request.bearer_auth(token);
+        }
+        let response = http_request
+            .send()
+            .await
+            .map_err(|error| CoordinatorStreamError::WorkerUnavailable(error.to_string()))?;
+        if !response.status().is_success() {
+            return Err(CoordinatorStreamError::WorkerUnavailable(format!(
+                "worker returned {}",
+                response.status()
+            )));
+        }
+        Ok(worker_sse_chunks(response))
     }
 
     fn generate_on(
@@ -317,6 +619,81 @@ impl Coordinator {
             .json::<lao_orchestrator_core::model::WorkerMetricsSnapshot>()
             .map_err(|e| e.to_string())
     }
+
+    /// Coordinator-owned proxy for worker job operations. It keeps remote CLI
+    /// profiles from needing worker URLs or worker bearer tokens locally.
+    pub fn job_request(
+        &self,
+        worker_id: &str,
+        method: reqwest::Method,
+        path: &str,
+    ) -> Result<serde_json::Value, String> {
+        let worker = self
+            .workers
+            .iter()
+            .find(|worker| worker.id == worker_id)
+            .ok_or_else(|| format!("unknown worker '{}'", worker_id))?;
+        let mut request = self.client.request(
+            method,
+            format!("{}/{}", worker.url.trim_end_matches('/'), path),
+        );
+        if let Some(token) = self.auth_header(worker) {
+            request = request.bearer_auth(token);
+        }
+        let response = request.send().map_err(|e| e.to_string())?;
+        if !response.status().is_success() {
+            return Err(format!("worker returned {}", response.status()));
+        }
+        response.json().map_err(|e| e.to_string())
+    }
+}
+
+fn worker_sse_chunks(response: reqwest::Response) -> ModelChunkStream {
+    Box::pin(futures::stream::unfold(
+        (response.bytes_stream(), String::new(), false),
+        |(mut bytes, mut buffer, done)| async move {
+            if done {
+                return None;
+            }
+            loop {
+                if let Some(end) = buffer.find("\n\n") {
+                    let frame = buffer[..end].to_string();
+                    buffer.drain(..end + 2);
+                    if let Some(item) = parse_worker_sse_frame(&frame) {
+                        return Some((item, (bytes, buffer, false)));
+                    }
+                    continue;
+                }
+
+                match bytes.next().await {
+                    Some(Ok(chunk)) => buffer.push_str(&String::from_utf8_lossy(&chunk)),
+                    Some(Err(error)) => {
+                        return Some((
+                            Err(format!("worker stream failed: {}", error)),
+                            (bytes, buffer, true),
+                        ));
+                    }
+                    None => return None,
+                }
+            }
+        },
+    ))
+}
+
+fn parse_worker_sse_frame(frame: &str) -> Option<Result<ModelChunk, String>> {
+    let mut event = None;
+    let mut data = String::new();
+    for line in frame.lines() {
+        if let Some(name) = line.strip_prefix("event: ") {
+            event = Some(name);
+        } else if let Some(payload) = line.strip_prefix("data: ") {
+            data.push_str(payload);
+        }
+    }
+    (event == Some("chunk")).then(|| {
+        serde_json::from_str::<ModelChunk>(&data)
+            .map_err(|error| format!("invalid worker stream chunk: {}", error))
+    })
 }
 
 impl ModelInvoker for Coordinator {
@@ -401,6 +778,7 @@ fn failure_response(request: &ModelRequest, error: ModelExecutionError) -> Model
             peak_vram_bytes: None,
         },
         usage: ModelUsage::default(),
+        tool_calls: vec![],
         error: Some(error),
     }
 }
@@ -470,5 +848,23 @@ auth_token_env = "LAO_LINUX_WORKER_TOKEN"
             response.error,
             Some(ModelExecutionError::NoEligibleWorker { .. })
         ));
+    }
+
+    #[test]
+    fn worker_sse_frames_decode_to_canonical_chunks() {
+        let frame = concat!(
+            "event: chunk\n",
+            "data: {\"type\":\"tool_call_delta\",\"index\":1,\"id\":\"call_1\",\"function_name\":null,\"arguments_delta\":\"{\\\"path\\\":\"}\n"
+        );
+        assert_eq!(
+            parse_worker_sse_frame(frame),
+            Some(Ok(ModelChunk::ToolCallDelta {
+                index: 1,
+                id: Some("call_1".to_string()),
+                function_name: None,
+                arguments_delta: Some(r#"{"path":"#.to_string()),
+            }))
+        );
+        assert!(parse_worker_sse_frame("event: response\ndata: {}\n").is_none());
     }
 }

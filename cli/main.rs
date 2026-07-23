@@ -1,4 +1,6 @@
+mod coordinator_commands;
 mod model_commands;
+mod profiles;
 mod worker_lifecycle;
 
 use clap::{Parser, Subcommand};
@@ -38,6 +40,10 @@ fn strip_code_fences(s: &str) -> String {
 #[command(name = "lao")]
 #[command(about = "Local AI Orchestrator CLI", long_about = None)]
 struct Cli {
+    /// Coordinator profile from [profiles.<name>] in lao.toml. Omit to preserve
+    /// the existing embedded coordinator behavior.
+    #[arg(long, global = true)]
+    profile: Option<String>,
     #[command(subcommand)]
     command: Commands,
 }
@@ -162,6 +168,11 @@ enum Commands {
     Jobs {
         #[command(subcommand)]
         action: JobsAction,
+    },
+    /// Coordinator service control
+    Coordinator {
+        #[command(subcommand)]
+        action: CoordinatorAction,
     },
 }
 
@@ -327,6 +338,19 @@ enum JobsAction {
     },
 }
 
+#[derive(Subcommand)]
+enum CoordinatorAction {
+    /// Start the coordinator as a persistent HTTP service (homelab mode)
+    Serve {
+        #[arg(long, help = "Path to lao.toml (default: ./lao.toml)")]
+        config: Option<String>,
+        #[arg(long, default_value = "0.0.0.0:3001", help = "Address to bind to")]
+        bind: Option<String>,
+        #[arg(long, help = "Env var name holding the bearer auth token")]
+        auth_token_env: Option<String>,
+    },
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -336,6 +360,7 @@ fn main() {
         .init();
 
     let cli = Cli::parse();
+    let profile = model_commands::resolve_profile(cli.profile.as_deref());
     match cli.command {
         Commands::Run { path, dry_run } => {
             if dry_run {
@@ -1014,13 +1039,13 @@ fn main() {
             WorkerAction::Logs { follow, lines } => worker_lifecycle::worker_logs(follow, lines),
         },
         Commands::Workers { action } => match action {
-            WorkersAction::List { json } => model_commands::workers_list(json),
+            WorkersAction::List { json } => model_commands::workers_list(json, &profile),
             WorkersAction::Inspect { worker_id, json } => {
-                model_commands::workers_inspect(worker_id, json)
+                model_commands::workers_inspect(worker_id, json, &profile)
             }
-            WorkersAction::Health { json } => model_commands::workers_health(json),
+            WorkersAction::Health { json } => model_commands::workers_health(json, &profile),
             WorkersAction::Metrics { worker_id, json } => {
-                model_commands::workers_metrics(worker_id, json)
+                model_commands::workers_metrics(worker_id, json, &profile)
             }
         },
         Commands::Models { action } => match action {
@@ -1066,17 +1091,26 @@ fn main() {
         },
         Commands::Route { action } => match action {
             RouteAction::Explain { role, model, json } => {
-                model_commands::route_explain(role, model, json)
+                model_commands::route_explain(role, model, json, &profile)
             }
         },
         Commands::Jobs { action } => match action {
-            JobsAction::List { worker, json } => model_commands::jobs_list(worker, json),
+            JobsAction::List { worker, json } => model_commands::jobs_list(worker, json, &profile),
             JobsAction::Inspect {
                 job_id,
                 worker,
                 json,
-            } => model_commands::jobs_inspect(job_id, worker, json),
-            JobsAction::Cancel { job_id, worker } => model_commands::jobs_cancel(job_id, worker),
+            } => model_commands::jobs_inspect(job_id, worker, json, &profile),
+            JobsAction::Cancel { job_id, worker } => {
+                model_commands::jobs_cancel(job_id, worker, &profile)
+            }
+        },
+        Commands::Coordinator { action } => match action {
+            CoordinatorAction::Serve {
+                config,
+                bind,
+                auth_token_env,
+            } => coordinator_commands::coordinator_serve(config, bind, auth_token_env),
         },
     }
 }

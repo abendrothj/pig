@@ -9,10 +9,11 @@
 
 use crate::model::registry::ModelRegistry;
 use crate::model::types::{AcceleratorKind, ModelId, ModelRequest, WorkerId};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WorkerLocality {
     Local,
     Remote,
@@ -25,7 +26,7 @@ pub enum WorkerLocality {
 /// already be current, which is why this is keyed per-model rather than a single
 /// worker-wide scalar (a stale-vs-current distinction is meaningless without knowing
 /// *which* model a measurement was for).
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct BenchmarkSummary {
     pub prompt_tokens_per_second: Option<f64>,
     pub generation_tokens_per_second: Option<f64>,
@@ -34,7 +35,7 @@ pub struct BenchmarkSummary {
 /// A point-in-time description of one worker's health and capacity, as reported by
 /// `/v1/health` + `/v1/capabilities` (or synthesized for tests). The scheduler never
 /// fetches this itself — it's pure data in, `RoutingExplanation` out.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkerSnapshot {
     pub worker_id: WorkerId,
     pub healthy: bool,
@@ -53,6 +54,8 @@ pub struct WorkerSnapshot {
     pub max_queued_jobs: usize,
     pub available_memory_bytes: Option<u64>,
     pub supports_streaming: bool,
+    #[serde(default)]
+    pub supports_tools: bool,
     pub locality: WorkerLocality,
     /// Per-model, already fingerprint-filtered benchmark throughput. Absence of an
     /// entry for a model means "no current benchmark data," not "zero throughput."
@@ -60,7 +63,7 @@ pub struct WorkerSnapshot {
     pub priority: i64,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SchedulingOverrides {
     pub force_worker: Option<WorkerId>,
     pub force_model: Option<ModelId>,
@@ -70,13 +73,13 @@ pub struct SchedulingOverrides {
     pub disable_fallback: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScoreComponent {
     pub label: String,
     pub value: i64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CandidatePlacement {
     pub worker_id: WorkerId,
     pub model_id: ModelId,
@@ -86,14 +89,14 @@ pub struct CandidatePlacement {
     pub used_cpu_fallback: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RejectedCandidate {
     pub worker_id: WorkerId,
     pub model_id: Option<ModelId>,
     pub reasons: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoutingExplanation {
     pub selected: Option<CandidatePlacement>,
     pub rejected: Vec<RejectedCandidate>,
@@ -506,6 +509,7 @@ mod tests {
             max_queued_jobs: 16,
             available_memory_bytes: Some(20_000_000_000),
             supports_streaming: true,
+            supports_tools: true,
             locality: WorkerLocality::Local,
             benchmarks: BTreeMap::new(),
             priority: 0,
