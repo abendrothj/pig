@@ -144,11 +144,57 @@ pub struct ModelToolFunction {
     pub arguments: String,
 }
 
+/// A single part within a multipart message content array.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ContentPart {
+    Text { text: String },
+    ImageUrl { image_url: ImageUrlContent },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImageUrlContent {
+    /// `data:image/<mime>;base64,<data>` or an `https://` URL.
+    pub url: String,
+}
+
+/// Message content: either a plain string (ordinary chat) or a parts array
+/// (multipart — text interleaved with images).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum MessageContent {
+    Text(String),
+    Parts(Vec<ContentPart>),
+}
+
+impl Default for MessageContent {
+    fn default() -> Self {
+        MessageContent::Text(String::new())
+    }
+}
+
+impl From<String> for MessageContent {
+    fn from(s: String) -> Self {
+        MessageContent::Text(s)
+    }
+}
+
+impl From<&str> for MessageContent {
+    fn from(s: &str) -> Self {
+        MessageContent::Text(s.to_string())
+    }
+}
+
+impl MessageContent {
+    pub fn has_images(&self) -> bool {
+        matches!(self, MessageContent::Parts(parts) if parts.iter().any(|p| matches!(p, ContentPart::ImageUrl { .. })))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelMessage {
     pub role: MessageRole,
-    /// Text content remains available for ordinary chat and existing workflows.
-    pub content: String,
+    pub content: MessageContent,
     /// Present only on assistant messages which requested tool execution.
     #[serde(default)]
     pub tool_calls: Vec<ModelToolCall>,
@@ -161,7 +207,7 @@ impl ModelMessage {
     pub fn system(content: impl Into<String>) -> Self {
         Self {
             role: MessageRole::System,
-            content: content.into(),
+            content: MessageContent::Text(content.into()),
             tool_calls: vec![],
             tool_call_id: None,
         }
@@ -170,7 +216,7 @@ impl ModelMessage {
     pub fn user(content: impl Into<String>) -> Self {
         Self {
             role: MessageRole::User,
-            content: content.into(),
+            content: MessageContent::Text(content.into()),
             tool_calls: vec![],
             tool_call_id: None,
         }
@@ -307,6 +353,10 @@ pub struct ModelRequirements {
     /// silently sent to a model that lacks the capability.
     #[serde(default)]
     pub reasoning: Option<bool>,
+    /// If `Some(true)`, only route to models tagged `vision = true` in their
+    /// registry entry. Auto-set when any user message contains image content parts.
+    #[serde(default)]
+    pub vision: Option<bool>,
 }
 
 fn default_true() -> bool {
@@ -331,6 +381,7 @@ impl Default for ModelRequirements {
             require_streaming: false,
             placement_policy: PlacementPolicy::Any,
             reasoning: None,
+            vision: None,
         }
     }
 }
@@ -690,7 +741,7 @@ mod tests {
         request.messages = vec![
             ModelMessage {
                 role: MessageRole::Assistant,
-                content: String::new(),
+                content: MessageContent::default(),
                 tool_calls: vec![ModelToolCall {
                     id: "call_weather".to_string(),
                     function: ModelToolFunction {
@@ -702,7 +753,7 @@ mod tests {
             },
             ModelMessage {
                 role: MessageRole::Tool,
-                content: r#"{"temperature_f":62}"#.to_string(),
+                content: MessageContent::Text(r#"{"temperature_f":62}"#.to_string()),
                 tool_calls: vec![],
                 tool_call_id: Some("call_weather".to_string()),
             },

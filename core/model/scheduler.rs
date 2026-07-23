@@ -214,6 +214,12 @@ fn check_hard_constraints(
                     model_id
                 ));
             }
+            if request.requirements.vision == Some(true) && entry.vision != Some(true) {
+                reasons.push(format!(
+                    "request requires a vision-capable model but '{}' is not tagged vision = true",
+                    model_id
+                ));
+            }
             if let (Some(estimated), Some(available)) =
                 (entry.estimated_memory_bytes, worker.available_memory_bytes)
             {
@@ -504,6 +510,7 @@ mod tests {
             execution_config: serde_json::Value::Null,
             tool_calling: None,
             reasoning: None,
+            vision: None,
         }
     }
 
@@ -806,6 +813,7 @@ mod tests {
             execution_config: serde_json::Value::Null,
             tool_calling: None,
             reasoning: Some(true),
+            vision: None,
         };
         let reg = ModelRegistry::new(
             vec![
@@ -844,6 +852,52 @@ mod tests {
             .rejected
             .iter()
             .any(|r| r.reasons.iter().any(|s| s.contains("reasoning"))));
+    }
+
+    #[test]
+    fn vision_requirement_rejects_non_vision_models() {
+        let vision_entry = ModelEntry {
+            id: ModelId::from("vlm"),
+            format: "gguf".to_string(),
+            path: PathBuf::from("/models/vlm.gguf"),
+            backend: "llama_cpp".to_string(),
+            context_tokens: Some(32768),
+            estimated_memory_bytes: Some(5_000_000_000),
+            roles: vec![ModelRole::Reasoning],
+            execution_config: serde_json::Value::Null,
+            tool_calling: None,
+            reasoning: None,
+            vision: Some(true),
+        };
+        let reg = ModelRegistry::new(
+            vec![
+                entry("big", 32768, 11_000_000_000, &[ModelRole::Reasoning]),
+                vision_entry,
+            ],
+            BTreeMap::new(),
+        )
+        .unwrap();
+
+        let mut w = worker("w1");
+        w.known_models.push(ModelId::from("vlm"));
+
+        // Vision-capable model: must be selected.
+        let mut req = request();
+        req.model = Some(crate::model::types::ModelSelector::Id(ModelId::from("vlm")));
+        req.requirements.vision = Some(true);
+        let exp = schedule(&req, &reg, &[w.clone()], &SchedulingOverrides::default());
+        assert!(exp.selected.is_some(), "vision model should be selected");
+
+        // Non-vision model with vision requirement: must be rejected.
+        let mut req2 = request();
+        req2.model = Some(crate::model::types::ModelSelector::Id(ModelId::from("big")));
+        req2.requirements.vision = Some(true);
+        let exp2 = schedule(&req2, &reg, &[w], &SchedulingOverrides::default());
+        assert!(exp2.selected.is_none(), "non-vision model must be rejected");
+        assert!(exp2
+            .rejected
+            .iter()
+            .any(|r| r.reasons.iter().any(|s| s.contains("vision"))));
     }
 
     #[test]

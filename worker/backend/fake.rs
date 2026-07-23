@@ -126,7 +126,17 @@ impl ModelBackend for FakeBackend {
             .iter()
             .rev()
             .find(|m| m.role == MessageRole::User)
-            .map(|m| m.content.clone())
+            .map(|m| match &m.content {
+                pig_core::model::MessageContent::Text(s) => s.clone(),
+                pig_core::model::MessageContent::Parts(parts) => parts
+                    .iter()
+                    .filter_map(|p| match p {
+                        pig_core::model::ContentPart::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            })
             .unwrap_or_default();
         let words: Vec<&str> = last_user.split_whitespace().collect();
         let prompt_tokens = words.len().max(1) as u32;

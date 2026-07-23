@@ -34,6 +34,11 @@ pub struct ModelEntry {
     /// where this is `Some(true)`.
     #[serde(default)]
     pub reasoning: Option<bool>,
+    /// Whether this model can process image inputs (e.g. LLaVA, Qwen2-VL, PaliGemma).
+    /// Hard routing constraint: requests with `requirements.vision = true`, or any request
+    /// whose messages contain image content parts, are only routed here.
+    #[serde(default)]
+    pub vision: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -121,6 +126,8 @@ impl ModelRegistry {
             tool_calling: Option<bool>,
             #[serde(default)]
             reasoning: Option<bool>,
+            #[serde(default)]
+            vision: Option<bool>,
         }
         #[derive(Deserialize)]
         struct ModelsToml {
@@ -154,6 +161,7 @@ impl ModelRegistry {
                 execution_config: e.execution_config,
                 tool_calling: e.tool_calling,
                 reasoning: e.reasoning,
+                vision: e.vision,
             })
             .collect();
 
@@ -337,6 +345,7 @@ cache_type_k = "q8_0"
                 execution_config: serde_json::Value::Null,
                 tool_calling: None,
                 reasoning: None,
+                vision: None,
             },
             ModelEntry {
                 id: ModelId::from("a"),
@@ -349,6 +358,7 @@ cache_type_k = "q8_0"
                 execution_config: serde_json::Value::Null,
                 tool_calling: None,
                 reasoning: None,
+                vision: None,
             },
         ];
         let err = ModelRegistry::new(entries, BTreeMap::new()).unwrap_err();
@@ -386,6 +396,7 @@ cache_type_k = "q8_0"
             execution_config: serde_json::Value::Null,
             tool_calling: None,
             reasoning: None,
+            vision: None,
         };
         let registry = ModelRegistry::new(vec![entry], BTreeMap::new()).unwrap();
         let resolved = registry.resolve(&ModelId::from("local")).unwrap();

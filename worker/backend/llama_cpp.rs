@@ -847,7 +847,7 @@ mod tests {
         let messages = openai_messages(&[
             ModelMessage {
                 role: MessageRole::Assistant,
-                content: String::new(),
+                content: pig_core::model::MessageContent::Text(String::new()),
                 tool_calls: vec![ModelToolCall {
                     id: "call_lookup".to_string(),
                     function: ModelToolFunction {
@@ -859,7 +859,7 @@ mod tests {
             },
             ModelMessage {
                 role: MessageRole::Tool,
-                content: r#"{"name":"pig"}"#.to_string(),
+                content: pig_core::model::MessageContent::Text(r#"{"name":"pig"}"#.to_string()),
                 tool_calls: vec![],
                 tool_call_id: Some("call_lookup".to_string()),
             },
@@ -940,7 +940,7 @@ mod tests {
             ModelMessage::user("list files"),
             ModelMessage {
                 role: MessageRole::Assistant,
-                content: String::new(),
+                content: pig_core::model::MessageContent::Text(String::new()),
                 tool_calls: vec![ModelToolCall {
                     id: "call_1".to_string(),
                     function: ModelToolFunction {
@@ -952,7 +952,9 @@ mod tests {
             },
             ModelMessage {
                 role: MessageRole::Tool,
-                content: r#"["src/","Cargo.toml"]"#.to_string(),
+                content: pig_core::model::MessageContent::Text(
+                    r#"["src/","Cargo.toml"]"#.to_string(),
+                ),
                 tool_calls: vec![],
                 tool_call_id: Some("call_1".to_string()),
             },
@@ -969,7 +971,7 @@ mod tests {
             ModelMessage::user("search the web"),
             ModelMessage {
                 role: MessageRole::Tool,
-                content: "results".to_string(),
+                content: pig_core::model::MessageContent::Text("results".to_string()),
                 tool_calls: vec![],
                 tool_call_id: Some("call_2".to_string()),
             },

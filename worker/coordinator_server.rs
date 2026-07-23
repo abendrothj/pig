@@ -17,10 +17,10 @@ use axum::{
 };
 use futures::StreamExt;
 use pig_core::model::{
-    FinishReason, GenerationParameters, MessageRole, ModelChunk, ModelInstance, ModelInvoker,
-    ModelMessage, ModelRequest, ModelRequirements, ModelResponseStatus, ModelRole, ModelSelector,
-    ModelToolCall, ModelToolFunction, RequestId, RoutingExplanation, SchedulingOverrides, WorkerId,
-    WorkerSnapshot,
+    ContentPart, FinishReason, GenerationParameters, ImageUrlContent, MessageContent, MessageRole,
+    ModelChunk, ModelInstance, ModelInvoker, ModelMessage, ModelRequest, ModelRequirements,
+    ModelResponseStatus, ModelRole, ModelSelector, ModelToolCall, ModelToolFunction, RequestId,
+    RoutingExplanation, SchedulingOverrides, WorkerId, WorkerSnapshot,
 };
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
@@ -189,11 +189,34 @@ struct OpenAiToolFunction {
     arguments: String,
 }
 
-fn openai_content(content: Option<serde_json::Value>) -> String {
+fn openai_content(content: Option<serde_json::Value>) -> MessageContent {
     match content {
-        Some(serde_json::Value::String(content)) => content,
-        Some(value) => value.to_string(),
-        None => String::new(),
+        Some(serde_json::Value::String(s)) => MessageContent::Text(s),
+        Some(serde_json::Value::Array(parts)) => {
+            let parsed: Vec<ContentPart> = parts
+                .into_iter()
+                .filter_map(|part| {
+                    let t = part.get("type")?.as_str()?;
+                    match t {
+                        "text" => Some(ContentPart::Text {
+                            text: part.get("text")?.as_str()?.to_string(),
+                        }),
+                        "image_url" => Some(ContentPart::ImageUrl {
+                            image_url: ImageUrlContent {
+                                url: part.get("image_url")?.get("url")?.as_str()?.to_string(),
+                            },
+                        }),
+                        _ => None,
+                    }
+                })
+                .collect();
+            if parsed.is_empty() {
+                MessageContent::Text(String::new())
+            } else {
+                MessageContent::Parts(parsed)
+            }
+        }
+        _ => MessageContent::Text(String::new()),
     }
 }
 
@@ -245,6 +268,7 @@ fn normalize_openai_request(
     } else {
         Some(ModelSelector::Alias(request.model.clone()))
     };
+    let has_images = messages.iter().any(|m| m.content.has_images());
     let model_id = request.model.clone();
     Ok((
         model_id,
@@ -261,7 +285,10 @@ fn normalize_openai_request(
                 tool_choice: request.tool_choice,
                 ..Default::default()
             },
-            requirements: Default::default(),
+            requirements: ModelRequirements {
+                vision: if has_images { Some(true) } else { None },
+                ..Default::default()
+            },
             inputs: vec![],
             metadata: Default::default(),
         },
@@ -347,7 +374,7 @@ async fn pipeline(
             if let Some(ref prev) = previous_content {
                 messages.push(ModelMessage {
                     role: MessageRole::Assistant,
-                    content: prev.clone(),
+                    content: MessageContent::Text(prev.clone()),
                     tool_calls: vec![],
                     tool_call_id: None,
                 });

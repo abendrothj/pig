@@ -41,6 +41,7 @@ async fn spawn_test_server(
         execution_config: serde_json::Value::Null,
         tool_calling: None,
         reasoning: None,
+        vision: None,
     };
     let mut roles = BTreeMap::new();
     roles.insert(ModelRole::Reasoning, vec![ModelId::from("m1")]);

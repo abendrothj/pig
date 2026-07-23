@@ -6,8 +6,8 @@
 use crate::profiles::Profile;
 use pig_core::model::{
     load_benchmark_records, record_benchmark, BenchmarkFingerprint, BenchmarkFreshness,
-    BenchmarkRecord, CoordinatorMetricsSnapshot, GenerationParameters, MessageRole, ModelChunk,
-    ModelId, ModelInvoker, ModelLoadState, ModelMessage, ModelRegistry, ModelRequest,
+    BenchmarkRecord, CoordinatorMetricsSnapshot, GenerationParameters, MessageContent, MessageRole,
+    ModelChunk, ModelId, ModelInvoker, ModelLoadState, ModelMessage, ModelRegistry, ModelRequest,
     ModelRequirements, ModelRole, ModelSelector, RequestId, SchedulingOverrides,
     WorkerLifecycleState, WorkerMetricsSnapshot, METRICS_SCHEMA_VERSION,
 };
@@ -744,14 +744,14 @@ pub fn models_generate(
     if let Some(s) = system {
         messages.push(ModelMessage {
             role: MessageRole::System,
-            content: s,
+            content: MessageContent::Text(s),
             tool_calls: vec![],
             tool_call_id: None,
         });
     }
     messages.push(ModelMessage {
         role: MessageRole::User,
-        content: prompt,
+        content: MessageContent::Text(prompt),
         tool_calls: vec![],
         tool_call_id: None,
     });
@@ -960,9 +960,10 @@ fn run_benchmark(
         model: Some(ModelSelector::Id(model_id_typed.clone())),
         messages: vec![ModelMessage {
             role: MessageRole::User,
-            content:
+            content: MessageContent::Text(
                 "Count from 1 to 50. Write each number on its own line. Do not add any other text."
                     .to_string(),
+            ),
             tool_calls: vec![],
             tool_call_id: None,
         }],
@@ -1119,7 +1120,7 @@ pub fn route_explain(role: Option<String>, model: Option<String>, json: bool, pr
         model: model.map(ModelSelector::Alias),
         messages: vec![ModelMessage {
             role: MessageRole::User,
-            content: "explain".to_string(),
+            content: MessageContent::Text("explain".to_string()),
             tool_calls: vec![],
             tool_call_id: None,
         }],
