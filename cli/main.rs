@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "pig")]
-#[command(about = "Local AI Orchestrator CLI", long_about = None)]
+#[command(about = "Private Inference Gateway CLI", long_about = None)]
 struct Cli {
     /// Coordinator profile from [profiles.<name>] in pig.toml. Omit to preserve
     /// the existing embedded coordinator behavior.

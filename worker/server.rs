@@ -138,14 +138,27 @@ struct CapabilitiesResponse {
     max_concurrent_jobs: usize,
     max_queued_jobs: usize,
     known_models: Vec<String>,
+    loaded_models: Vec<String>,
+    available_memory_bytes: Option<u64>,
 }
 
 async fn capabilities(State(state): State<Arc<AppState>>) -> Json<CapabilitiesResponse> {
-    let backend = state.runtime.backend().capabilities().await.ok();
+    let backend_caps = state.runtime.backend().capabilities().await.ok();
+    let loaded_models: Vec<String> = state
+        .runtime
+        .backend()
+        .list_models()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|m| m.loaded)
+        .map(|m| m.model_id.0)
+        .collect();
+    let available_memory_bytes = live_hardware(&state).await.available_memory_bytes;
     Json(CapabilitiesResponse {
         worker_id: state.config.id.clone(),
         hardware: state.hardware.clone(),
-        backend,
+        backend: backend_caps,
         max_concurrent_jobs: state.config.max_concurrent_jobs,
         max_queued_jobs: state.config.max_queued_jobs,
         known_models: state
@@ -154,6 +167,8 @@ async fn capabilities(State(state): State<Arc<AppState>>) -> Json<CapabilitiesRe
             .into_iter()
             .map(|r| r.entry.id.0)
             .collect(),
+        loaded_models,
+        available_memory_bytes,
     })
 }
 

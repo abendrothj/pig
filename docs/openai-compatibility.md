@@ -11,6 +11,7 @@ The coordinator provides a deliberately thin OpenAI-compatible boundary:
 
 - `GET /v1/models`
 - `POST /v1/chat/completions`
+- `POST /v1/pipeline`
 
 It translates request and response shapes only. It must never grow a second
 scheduler, routing policy, worker selection mechanism, benchmark store, metrics
@@ -20,9 +21,10 @@ system, or authentication layer.
 OpenAI client → coordinator gateway → ModelRequest → scheduler → worker → ModelResponse
 ```
 
-`/v1/models` publishes stable logical policies (`pig-coding`,
-`pig-reasoning`, and `pig-verification`). Physical model identifiers are
-operator-facing information and are not part of the client contract.
+`/v1/models` returns two kinds of entries: the stable logical role aliases
+(`pig-coding`, `pig-reasoning`, `pig-verification`) and the actual model IDs
+registered in the coordinator's `pig.toml`. Clients that want role-based routing
+use the aliases; clients that need a specific physical model pass its ID directly.
 
 ## Tool calls and streaming
 
@@ -41,6 +43,51 @@ Streaming follows the same boundary. Workers emit canonical `ModelChunk` values
 without buffering, and only the gateway translates them into OpenAI SSE chunks.
 Dropping a downstream stream closes the worker response body, so the existing
 bounded worker channel applies backpressure instead of accumulating a response.
+
+## Pipeline
+
+`POST /v1/pipeline` executes a sequence of model invocations in order, each
+dispatched through the full scheduler independently.
+
+```json
+{
+  "steps": [
+    {
+      "role": "reasoning",
+      "messages": [{"role": "user", "content": "Draft an answer to: ..."}],
+      "inject_previous": false
+    },
+    {
+      "role": "verification",
+      "messages": [{"role": "user", "content": "Is the above accurate?"}],
+      "requirements": {"preferred_accelerator": "cuda"},
+      "inject_previous": true
+    }
+  ]
+}
+```
+
+`role` defaults to `reasoning` when omitted. `requirements` is the same
+`ModelRequirements` struct used by `/v1/generate` — accelerator preference,
+memory floor, placement policy, timeouts. When `inject_previous` is `true`, the
+previous step's text output is prepended as an `assistant` message before the
+current step's messages; the caller controls context threading, pig executes it.
+
+Response:
+
+```json
+{
+  "steps": [
+    {"step": 0, "content": "..."},
+    {"step": 1, "content": "..."}
+  ]
+}
+```
+
+A failed step returns an HTTP error with the step index in the message; prior
+steps' outputs are not returned on partial failure. Each step runs the full
+scheduler, so steps can land on different workers depending on their
+`requirements` and what each worker is best positioned to handle at that moment.
 
 ## Integration boundary
 

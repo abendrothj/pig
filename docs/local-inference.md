@@ -214,7 +214,14 @@ pig route explain [--role reasoning | --model <id>] [--json]
 pig jobs list --worker <id> [--json]
 pig jobs inspect <job-id> --worker <id> [--json]
 pig jobs cancel <job-id> --worker <id>
+
+pig coordinator serve [--config pig.toml] [--bind 0.0.0.0:3001] [--auth-token-env VAR]
 ```
+
+The coordinator exposes `GET /v1/models`, `POST /v1/chat/completions`, and
+`POST /v1/pipeline`. See [openai-compatibility.md](openai-compatibility.md) for
+the full HTTP API reference, including the pipeline endpoint's per-step
+`role`, `requirements`, and `inject_previous` context-threading semantics.
 
 `--stream` prints tokens as they arrive (interactive use); without it, `models
 generate` waits for the full response and prints the final text (or the complete

@@ -18,8 +18,8 @@ use axum::{
 use futures::StreamExt;
 use pig_core::model::{
     FinishReason, GenerationParameters, MessageRole, ModelChunk, ModelInvoker, ModelMessage,
-    ModelRequest, ModelResponseStatus, ModelRole, ModelSelector, ModelToolCall, ModelToolFunction,
-    RequestId, RoutingExplanation, SchedulingOverrides, WorkerSnapshot,
+    ModelRequest, ModelRequirements, ModelResponseStatus, ModelRole, ModelSelector, ModelToolCall,
+    ModelToolFunction, RequestId, RoutingExplanation, SchedulingOverrides, WorkerSnapshot,
 };
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
@@ -251,16 +251,138 @@ fn normalize_openai_request(
 }
 
 async fn openai_models(
-    State(_state): State<Arc<CoordinatorServerState>>,
+    State(state): State<Arc<CoordinatorServerState>>,
 ) -> Json<serde_json::Value> {
     let created = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let ids = ["pig-coding", "pig-reasoning", "pig-verification"];
-    Json(
-        serde_json::json!({"object":"list", "data": ids.into_iter().map(|id| serde_json::json!({"id":id,"object":"model","created":created,"owned_by":"pig"})).collect::<Vec<_>>() }),
-    )
+    // Role aliases are always valid selectors regardless of what models are registered.
+    let mut ids: Vec<String> = vec![
+        "pig-coding".to_string(),
+        "pig-reasoning".to_string(),
+        "pig-verification".to_string(),
+    ];
+    for resolved in state.coordinator.registry().all_resolved() {
+        ids.push(resolved.entry.id.0.clone());
+    }
+    Json(serde_json::json!({
+        "object": "list",
+        "data": ids.into_iter().map(|id| serde_json::json!({
+            "id": id,
+            "object": "model",
+            "created": created,
+            "owned_by": "pig"
+        })).collect::<Vec<_>>()
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct PipelineStep {
+    messages: Vec<OpenAiMessage>,
+    #[serde(default)]
+    role: Option<ModelRole>,
+    #[serde(default)]
+    requirements: ModelRequirements,
+    #[serde(default)]
+    inject_previous: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct PipelineRequest {
+    steps: Vec<PipelineStep>,
+}
+
+#[derive(Debug, Serialize)]
+struct PipelineStepOutput {
+    step: usize,
+    content: String,
+}
+
+#[derive(Debug, Serialize)]
+struct PipelineResponse {
+    steps: Vec<PipelineStepOutput>,
+}
+
+async fn pipeline(
+    State(state): State<Arc<CoordinatorServerState>>,
+    Json(body): Json<PipelineRequest>,
+) -> Response {
+    if body.steps.is_empty() {
+        return error_response(StatusCode::BAD_REQUEST, "pipeline must have at least one step");
+    }
+    let mut outputs: Vec<PipelineStepOutput> = Vec::with_capacity(body.steps.len());
+    let mut previous_content: Option<String> = None;
+
+    for (i, step) in body.steps.into_iter().enumerate() {
+        let mut messages: Vec<ModelMessage> = Vec::new();
+        if step.inject_previous {
+            if let Some(ref prev) = previous_content {
+                messages.push(ModelMessage {
+                    role: MessageRole::Assistant,
+                    content: prev.clone(),
+                    tool_calls: vec![],
+                    tool_call_id: None,
+                });
+            }
+        }
+        for msg in step.messages {
+            let role = match msg.role.as_str() {
+                "system" | "developer" => MessageRole::System,
+                "user" => MessageRole::User,
+                "assistant" => MessageRole::Assistant,
+                "tool" => MessageRole::Tool,
+                other => {
+                    return error_response(
+                        StatusCode::BAD_REQUEST,
+                        format!("step {i}: unsupported message role '{other}'"),
+                    )
+                }
+            };
+            messages.push(ModelMessage {
+                role,
+                content: openai_content(msg.content),
+                tool_calls: vec![],
+                tool_call_id: msg.tool_call_id,
+            });
+        }
+
+        let request = ModelRequest {
+            request_id: RequestId::generate(),
+            role: step.role.unwrap_or(ModelRole::Reasoning),
+            model: None,
+            messages,
+            parameters: GenerationParameters::default(),
+            requirements: step.requirements,
+            inputs: vec![],
+            metadata: Default::default(),
+        };
+        if let Err(e) = request.validate() {
+            return error_response(StatusCode::BAD_REQUEST, format!("step {i}: {e}"));
+        }
+
+        let coord = Arc::clone(&state.coordinator);
+        let response = match task::spawn_blocking(move || coord.invoke(request)).await {
+            Ok(r) => r,
+            Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        };
+        if response.status != ModelResponseStatus::Success {
+            let msg = response
+                .error
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "inference failed".to_string());
+            return error_response(StatusCode::BAD_GATEWAY, format!("step {i}: {msg}"));
+        }
+
+        let content = match response.output {
+            pig_core::artifact::Artifact::Text(text) => text,
+            other => serde_json::to_string(&other).unwrap_or_default(),
+        };
+        previous_content = Some(content.clone());
+        outputs.push(PipelineStepOutput { step: i, content });
+    }
+
+    Json(PipelineResponse { steps: outputs }).into_response()
 }
 
 async fn openai_chat_completions(
@@ -534,6 +656,7 @@ pub fn router(state: Arc<CoordinatorServerState>) -> Router {
         .route("/v1/generate", post(generate))
         .route("/v1/route", post(route_explain))
         .route("/v1/models", get(openai_models))
+        .route("/v1/pipeline", post(pipeline))
         .route("/v1/chat/completions", post(openai_chat_completions))
         .route("/v1/jobs", get(jobs_list))
         .route("/v1/jobs/:job_id", get(job_inspect))

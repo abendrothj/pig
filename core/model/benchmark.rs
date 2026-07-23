@@ -76,6 +76,16 @@ pub struct BenchmarkRecord {
     pub total_ms: u64,
     pub prompt_tokens: u32,
     pub generated_tokens: u32,
+    /// Median time-to-first-token in milliseconds.
+    #[serde(default)]
+    pub p50_ttft_ms: Option<u32>,
+    /// 95th-percentile time-to-first-token in milliseconds.
+    #[serde(default)]
+    pub p95_ttft_ms: Option<u32>,
+    /// When this record was produced by a pipeline verifier step: fraction of tokens
+    /// accepted without rewrite (0.0–1.0). `None` for non-pipeline benchmarks.
+    #[serde(default)]
+    pub pipeline_acceptance_rate: Option<f32>,
 }
 
 pub fn benchmark_store_dir() -> PathBuf {
@@ -280,6 +290,9 @@ mod tests {
             total_ms: 20,
             prompt_tokens: 5,
             generated_tokens: 5,
+            p50_ttft_ms: None,
+            p95_ttft_ms: None,
+            pipeline_acceptance_rate: None,
         };
         let newer = BenchmarkRecord {
             timestamp_unix_ms: 2000,

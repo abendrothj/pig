@@ -216,6 +216,16 @@ fn check_hard_constraints(
                     ));
                 }
             }
+            if let Some(required_avail) = request.requirements.minimum_available_memory_bytes {
+                if let Some(available) = worker.available_memory_bytes {
+                    if available < required_avail {
+                        reasons.push(format!(
+                            "available memory {} bytes is below the required {} bytes",
+                            available, required_avail
+                        ));
+                    }
+                }
+            }
         }
     }
 

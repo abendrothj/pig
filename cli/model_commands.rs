@@ -240,13 +240,14 @@ fn print_snapshots(snapshots: &[pig_core::model::WorkerSnapshot], json: bool) {
 }
 
 pub fn workers_health(json: bool, profile: &Profile) {
-    workers_list(json, profile);
     if profile.remote().is_some() {
+        workers_list(json, profile);
         return;
     }
-    let workers = load_workers();
-    let coordinator = Coordinator::new(workers, load_registry());
-    if coordinator.snapshots().iter().any(|s| !s.healthy) {
+    let coordinator = Coordinator::new(load_workers(), load_registry());
+    let snapshots = coordinator.snapshots();
+    print_snapshots(&snapshots, json);
+    if snapshots.iter().any(|s| !s.healthy) {
         std::process::exit(1);
     }
 }
@@ -925,6 +926,9 @@ pub fn models_benchmark(model_id: String, worker: Option<String>, json: bool) {
         total_ms: response.execution.total_ms,
         prompt_tokens: response.execution.prompt_tokens,
         generated_tokens: response.execution.generated_tokens,
+        p50_ttft_ms: None,
+        p95_ttft_ms: None,
+        pipeline_acceptance_rate: None,
     };
 
     if let Err(e) = record_benchmark(&model_id_typed, &record) {

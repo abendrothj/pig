@@ -15,5 +15,6 @@ candidates = ["qwen3-8b-q4"]
 
 # Optional: named profiles for remote coordinators (pig --profile <name> ...)
 # [profiles.remote]
-# url = "http://spectre:9847"
-# auth_token_env = "REMOTE_COORDINATOR_TOKEN"
+# mode = "remote"
+# coordinator_url = "http://spectre:3001"
+# token_env = "REMOTE_COORDINATOR_TOKEN"

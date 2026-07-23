@@ -95,6 +95,10 @@ pub struct Coordinator {
 }
 
 impl Coordinator {
+    pub fn registry(&self) -> &ModelRegistry {
+        &self.registry
+    }
+
     pub fn new(workers: Vec<WorkerEndpointConfig>, registry: ModelRegistry) -> Self {
         let client = reqwest::blocking::Client::builder()
             .connect_timeout(Duration::from_secs(5))
@@ -123,7 +127,74 @@ impl Coordinator {
     /// coordinator keeps operating and the routing explanation shows *why* that
     /// worker was rejected instead of just omitting it.
     fn snapshot(&self, worker: &WorkerEndpointConfig) -> WorkerSnapshot {
-        let unhealthy = |_reason: &str| WorkerSnapshot {
+        let mut health_req = self.client.get(format!("{}/v1/health", worker.url));
+        if let Some(token) = self.auth_header(worker) {
+            health_req = health_req.bearer_auth(token);
+        }
+        let health: serde_json::Value = match health_req.send().and_then(|r| r.error_for_status()) {
+            Ok(resp) => resp.json().unwrap_or(serde_json::Value::Null),
+            Err(_) => return self.unhealthy_snapshot(worker),
+        };
+        let mut caps_req = self.client.get(format!("{}/v1/capabilities", worker.url));
+        if let Some(token) = self.auth_header(worker) {
+            caps_req = caps_req.bearer_auth(token);
+        }
+        let caps: serde_json::Value = match caps_req.send().and_then(|r| r.error_for_status()) {
+            Ok(resp) => resp.json().unwrap_or(serde_json::Value::Null),
+            Err(_) => return self.unhealthy_snapshot(worker),
+        };
+        self.parse_snapshot(worker, &health, &caps)
+    }
+
+    /// Health/capability snapshot of every configured worker, independent of any
+    /// specific request - used by `workers list`/`workers health`.
+    pub fn snapshots(&self) -> Vec<WorkerSnapshot> {
+        self.workers.iter().map(|w| self.snapshot(w)).collect()
+    }
+
+    /// Async-native discovery for the long-running server. The embedded workflow
+    /// path deliberately remains synchronous because it implements ModelInvoker.
+    /// Scheduling itself remains the pure `schedule(&[WorkerSnapshot])` function.
+    pub async fn async_snapshots(&self) -> Vec<WorkerSnapshot> {
+        let mut snapshots = Vec::with_capacity(self.workers.len());
+        for worker in &self.workers {
+            snapshots.push(self.async_snapshot(worker).await);
+        }
+        snapshots
+    }
+
+    async fn async_snapshot(&self, worker: &WorkerEndpointConfig) -> WorkerSnapshot {
+        let mut health_req = self.async_client.get(format!("{}/v1/health", worker.url));
+        if let Some(token) = self.auth_header(worker) {
+            health_req = health_req.bearer_auth(token);
+        }
+        let health: serde_json::Value =
+            match health_req.send().await.and_then(|r| r.error_for_status()) {
+                Ok(resp) => match resp.json().await {
+                    Ok(v) => v,
+                    Err(_) => return self.unhealthy_snapshot(worker),
+                },
+                Err(_) => return self.unhealthy_snapshot(worker),
+            };
+        let mut caps_req = self
+            .async_client
+            .get(format!("{}/v1/capabilities", worker.url));
+        if let Some(token) = self.auth_header(worker) {
+            caps_req = caps_req.bearer_auth(token);
+        }
+        let caps: serde_json::Value =
+            match caps_req.send().await.and_then(|r| r.error_for_status()) {
+                Ok(resp) => match resp.json().await {
+                    Ok(v) => v,
+                    Err(_) => return self.unhealthy_snapshot(worker),
+                },
+                Err(_) => return self.unhealthy_snapshot(worker),
+            };
+        self.parse_snapshot(worker, &health, &caps)
+    }
+
+    fn unhealthy_snapshot(&self, worker: &WorkerEndpointConfig) -> WorkerSnapshot {
+        WorkerSnapshot {
             worker_id: WorkerId::from(worker.id.clone()),
             healthy: false,
             backend: "unknown".to_string(),
@@ -142,40 +213,20 @@ impl Coordinator {
             locality: WorkerLocality::Remote,
             benchmarks: BTreeMap::new(),
             priority: worker.priority,
-        };
-
-        let mut request = self.client.get(format!("{}/v1/health", worker.url));
-        if let Some(token) = self.auth_header(worker) {
-            request = request.bearer_auth(token);
         }
-        let health: serde_json::Value = match request.send().and_then(|r| r.error_for_status()) {
-            Ok(resp) => resp.json().unwrap_or(serde_json::Value::Null),
-            Err(_) => return unhealthy("health check failed"),
-        };
-        let healthy = health.get("status").and_then(|s| s.as_str()) == Some("ok");
-        let active_jobs = health
-            .get("active_jobs")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize;
-        let queue_depth = health
-            .get("queued_jobs")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize;
+    }
 
-        let mut caps_request = self.client.get(format!("{}/v1/capabilities", worker.url));
-        if let Some(token) = self.auth_header(worker) {
-            caps_request = caps_request.bearer_auth(token);
-        }
-        let caps: serde_json::Value = match caps_request.send().and_then(|r| r.error_for_status()) {
-            Ok(resp) => resp.json().unwrap_or(serde_json::Value::Null),
-            Err(_) => return unhealthy("capabilities check failed"),
-        };
-
+    /// Shared JSON → WorkerSnapshot parsing used by both the sync and async probe paths.
+    fn parse_snapshot(
+        &self,
+        worker: &WorkerEndpointConfig,
+        health: &serde_json::Value,
+        caps: &serde_json::Value,
+    ) -> WorkerSnapshot {
         let backend_obj = caps
             .get("backend")
             .cloned()
             .unwrap_or(serde_json::Value::Null);
-        let backend_healthy = !backend_obj.is_null();
         let backend = backend_obj
             .get("backend")
             .and_then(|v| v.as_str())
@@ -184,7 +235,7 @@ impl Coordinator {
         let backend_version = backend_obj
             .get("version")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(str::to_string);
         let accelerators: Vec<pig_core::model::AcceleratorKind> = backend_obj
             .get("accelerators")
             .and_then(|v| v.as_array())
@@ -217,6 +268,19 @@ impl Coordinator {
                     .collect()
             })
             .unwrap_or_default();
+        let loaded_models: Vec<ModelId> = caps
+            .get("loaded_models")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(ModelId::from)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let available_memory_bytes = caps
+            .get("available_memory_bytes")
+            .and_then(|v| v.as_u64());
 
         // Coarse but real: built the same way at benchmark-record time (see
         // cli::model_commands::models_benchmark), from data the worker itself reports
@@ -230,17 +294,14 @@ impl Coordinator {
                     .unwrap_or("unknown"),
             )
         });
-
         let locality = if is_loopback_or_private(&worker.url) {
             WorkerLocality::Local
         } else {
             WorkerLocality::Remote
         };
 
-        // Only ever fingerprint-matched (current) history reaches the scheduler - a
-        // benchmark recorded under different conditions (model file changed, backend
-        // upgraded, different worker hardware, different context/accelerator) is
-        // simply absent here, not present-but-wrong. See BenchmarkFingerprint::matches.
+        // Only ever fingerprint-matched (current) history reaches the scheduler — a
+        // benchmark recorded under different conditions is absent here, not present-but-wrong.
         let worker_id = WorkerId::from(worker.id.clone());
         let benchmarks: BTreeMap<ModelId, BenchmarkSummary> = known_models
             .iter()
@@ -272,210 +333,27 @@ impl Coordinator {
 
         WorkerSnapshot {
             worker_id,
-            healthy,
-            backend,
-            backend_version,
-            backend_healthy,
-            worker_hardware_fingerprint: hardware_fp,
-            accelerators,
-            loaded_models: vec![], // not currently exposed distinctly from known_models over HTTP
-            known_models,
-            queue_depth,
-            active_jobs,
-            max_queued_jobs,
-            available_memory_bytes: None,
-            supports_streaming,
-            supports_tools,
-            locality,
-            benchmarks,
-            priority: worker.priority,
-        }
-    }
-
-    /// Health/capability snapshot of every configured worker, independent of any
-    /// specific request - used by `workers list`/`workers health`.
-    pub fn snapshots(&self) -> Vec<WorkerSnapshot> {
-        self.workers.iter().map(|w| self.snapshot(w)).collect()
-    }
-
-    /// Async-native discovery for the long-running server. The embedded workflow
-    /// path deliberately remains synchronous because it implements ModelInvoker.
-    /// Scheduling itself remains the pure `schedule(&[WorkerSnapshot])` function.
-    pub async fn async_snapshots(&self) -> Vec<WorkerSnapshot> {
-        let mut snapshots = Vec::with_capacity(self.workers.len());
-        for worker in &self.workers {
-            snapshots.push(self.async_snapshot(worker).await);
-        }
-        snapshots
-    }
-
-    async fn async_snapshot(&self, worker: &WorkerEndpointConfig) -> WorkerSnapshot {
-        let unhealthy = || WorkerSnapshot {
-            worker_id: WorkerId::from(worker.id.clone()),
-            healthy: false,
-            backend: "unknown".to_string(),
-            backend_version: None,
-            backend_healthy: false,
-            worker_hardware_fingerprint: None,
-            accelerators: vec![],
-            loaded_models: vec![],
-            known_models: vec![],
-            queue_depth: 0,
-            active_jobs: 0,
-            max_queued_jobs: 0,
-            available_memory_bytes: None,
-            supports_streaming: false,
-            supports_tools: false,
-            locality: WorkerLocality::Remote,
-            benchmarks: BTreeMap::new(),
-            priority: worker.priority,
-        };
-        let mut health_request = self.async_client.get(format!("{}/v1/health", worker.url));
-        if let Some(token) = self.auth_header(worker) {
-            health_request = health_request.bearer_auth(token);
-        }
-        let health: serde_json::Value = match health_request
-            .send()
-            .await
-            .and_then(|r| r.error_for_status())
-        {
-            Ok(response) => match response.json().await {
-                Ok(value) => value,
-                Err(_) => return unhealthy(),
-            },
-            Err(_) => return unhealthy(),
-        };
-        let mut caps_request = self
-            .async_client
-            .get(format!("{}/v1/capabilities", worker.url));
-        if let Some(token) = self.auth_header(worker) {
-            caps_request = caps_request.bearer_auth(token);
-        }
-        let caps: serde_json::Value =
-            match caps_request.send().await.and_then(|r| r.error_for_status()) {
-                Ok(response) => match response.json().await {
-                    Ok(value) => value,
-                    Err(_) => return unhealthy(),
-                },
-                Err(_) => return unhealthy(),
-            };
-        let backend_obj = caps
-            .get("backend")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null);
-        let backend = backend_obj
-            .get("backend")
-            .and_then(|value| value.as_str())
-            .unwrap_or("unknown")
-            .to_string();
-        let backend_version = backend_obj
-            .get("version")
-            .and_then(|value| value.as_str())
-            .map(str::to_string);
-        let accelerators: Vec<pig_core::model::AcceleratorKind> = backend_obj
-            .get("accelerators")
-            .and_then(|value| value.as_array())
-            .map(|values| {
-                values
-                    .iter()
-                    .filter_map(|value| value.as_str())
-                    .filter_map(parse_accelerator)
-                    .collect()
-            })
-            .unwrap_or_default();
-        let known_models: Vec<ModelId> = caps
-            .get("known_models")
-            .and_then(|value| value.as_array())
-            .map(|values| {
-                values
-                    .iter()
-                    .filter_map(|value| value.as_str())
-                    .map(ModelId::from)
-                    .collect()
-            })
-            .unwrap_or_default();
-        let hardware_fp = caps.get("hardware").map(|hardware| {
-            pig_core::model::worker_hardware_fingerprint(
-                hardware
-                    .get("os")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("unknown"),
-                hardware
-                    .get("arch")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("unknown"),
-                hardware
-                    .get("hostname")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("unknown"),
-            )
-        });
-        let worker_id = WorkerId::from(worker.id.clone());
-        let benchmarks = known_models
-            .iter()
-            .filter_map(|model_id| {
-                let entry = self.registry.get(model_id)?;
-                let fingerprint = BenchmarkFingerprint {
-                    model_id: model_id.clone(),
-                    model_file_size_bytes: std::fs::metadata(&entry.path)
-                        .ok()
-                        .map(|metadata| metadata.len()),
-                    model_file_hash: None,
-                    backend: backend.clone(),
-                    backend_version: backend_version.clone(),
-                    worker_hardware_fingerprint: hardware_fp.clone()?,
-                    accelerator: accelerators.first().copied(),
-                    context_tokens: entry.context_tokens,
-                    gpu_layers: None,
-                    cpu_threads: None,
-                    batch_size: None,
-                };
-                let record = latest_matching_benchmark(model_id, &worker_id, &fingerprint)?;
-                Some((
-                    model_id.clone(),
-                    BenchmarkSummary {
-                        prompt_tokens_per_second: record.prompt_tokens_per_second,
-                        generation_tokens_per_second: record.generation_tokens_per_second,
-                    },
-                ))
-            })
-            .collect();
-        WorkerSnapshot {
-            worker_id,
-            healthy: health.get("status").and_then(|value| value.as_str()) == Some("ok"),
+            healthy: health.get("status").and_then(|v| v.as_str()) == Some("ok"),
             backend,
             backend_version,
             backend_healthy: !backend_obj.is_null(),
             worker_hardware_fingerprint: hardware_fp,
             accelerators,
-            loaded_models: vec![],
+            loaded_models,
             known_models,
             queue_depth: health
                 .get("queued_jobs")
-                .and_then(|value| value.as_u64())
+                .and_then(|v| v.as_u64())
                 .unwrap_or(0) as usize,
             active_jobs: health
                 .get("active_jobs")
-                .and_then(|value| value.as_u64())
+                .and_then(|v| v.as_u64())
                 .unwrap_or(0) as usize,
-            max_queued_jobs: caps
-                .get("max_queued_jobs")
-                .and_then(|value| value.as_u64())
-                .unwrap_or(0) as usize,
-            available_memory_bytes: None,
-            supports_streaming: backend_obj
-                .get("supports_streaming")
-                .and_then(|value| value.as_bool())
-                .unwrap_or(false),
-            supports_tools: backend_obj
-                .get("supports_tools")
-                .and_then(|value| value.as_bool())
-                .unwrap_or(false),
-            locality: if is_loopback_or_private(&worker.url) {
-                WorkerLocality::Local
-            } else {
-                WorkerLocality::Remote
-            },
+            max_queued_jobs,
+            available_memory_bytes,
+            supports_streaming,
+            supports_tools,
+            locality,
             benchmarks,
             priority: worker.priority,
         }

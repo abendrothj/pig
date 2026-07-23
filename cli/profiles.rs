@@ -12,11 +12,6 @@ pub enum Profile {
         coordinator_url: String,
         token_env: Option<String>,
     },
-    LocalWithFallback {
-        coordinator_url: String,
-        token_env: Option<String>,
-        fallback_config: String,
-    },
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -43,11 +38,6 @@ impl Profile {
             Self::Remote {
                 coordinator_url,
                 token_env,
-            }
-            | Self::LocalWithFallback {
-                coordinator_url,
-                token_env,
-                ..
             } => Some((coordinator_url, token_env.as_deref())),
             Self::Embedded => None,
         }
@@ -64,13 +54,23 @@ mod tests {
     }
 
     #[test]
-    fn remote_profile_cannot_express_fallback() {
-        let config = "[profiles.prod]\nmode = 'remote'\ncoordinator_url = 'http://spectre:3001'\nfallback_config = 'x'\n";
+    fn remote_profile_rejects_unknown_fields() {
+        let config = "[profiles.prod]\nmode = 'remote'\ncoordinator_url = 'http://spectre:3001'\nunknown_field = 'x'\n";
         assert!(selected(Some("prod"), config).is_err());
     }
 
     #[test]
     fn omitted_profile_preserves_embedded_compatibility() {
         assert_eq!(selected(None, "").unwrap(), Profile::Embedded);
+    }
+
+    #[test]
+    fn remote_profile_parses_with_url_and_token() {
+        let config = "[profiles.prod]\nmode = 'remote'\ncoordinator_url = 'http://spectre:3001'\ntoken_env = 'PIG_TOKEN'\n";
+        let profile = selected(Some("prod"), config).unwrap();
+        assert_eq!(
+            profile.remote(),
+            Some(("http://spectre:3001", Some("PIG_TOKEN")))
+        );
     }
 }

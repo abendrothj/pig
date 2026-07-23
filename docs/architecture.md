@@ -38,8 +38,10 @@ ModelResponse (output artifact + execution metadata)
 
 Two layers:
 
-1. **Hard constraints** — reject workers that cannot satisfy the request: wrong accelerator type, remote worker when `PlacementPolicy::LocalOnly` is set, model not loaded or unknown.
-2. **Scoring** — among eligible workers, prefer lower queue depth and higher capability match.
+1. **Hard constraints** — reject workers that cannot satisfy the request: model not in the worker's known-model list, wrong accelerator type, remote worker when `PlacementPolicy::LocalOnly` is set, queue full, available memory below `minimum_available_memory_bytes`.
+2. **Scoring** — among eligible workers, score by queue depth, benchmark throughput, and whether the requested model is already hot in memory (+100 bonus for a loaded model, avoiding a cold-start load).
+
+Both inputs — `loaded_models` and `available_memory_bytes` — are populated from the worker's `/v1/capabilities` response on every snapshot probe. Workers report them from `backend.list_models()` and a TTL-cached hardware probe respectively.
 
 `ReasoningMode` (Auto/Enabled/Disabled) is resolved in the coordinator before dispatch. `Auto` maps to `Enabled` for reasoning/coding roles and when tools are present; `Disabled` otherwise. The backend receives only the resolved value and injects the appropriate control token (`/think` or `/no_think`) for Qwen3-style models.
 
