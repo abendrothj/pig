@@ -63,7 +63,7 @@ MLX models are HuggingFace-format directories, not GGUF files. Download one:
 
 ```bash
 pip install huggingface-hub
-huggingface-cli download mlx-community/Qwen3-8B-4bit --local-dir ~/models/Qwen3-8B-4bit
+hf download mlx-community/Qwen3-8B-4bit --local-dir ~/models/Qwen3-8B-4bit
 ```
 
 Then configure a worker to use the MLX backend:

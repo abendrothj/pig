@@ -649,13 +649,29 @@ pub fn models_load(model_id: String, worker: Option<String>) {
     .send();
     match resp {
         Ok(r) if r.status().is_success() => {
-            println!("{}", r.text().unwrap_or_default());
+            let body = r.text().unwrap_or_default();
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {
+                let accel = v["accelerator"].as_str().unwrap_or("cpu");
+                let load_ms = v["load_ms"].as_u64().unwrap_or(0);
+                let already = v["already_loaded"].as_bool().unwrap_or(false);
+                if already {
+                    println!("Already loaded: {} ({})", model_id, accel);
+                } else {
+                    println!("Loaded: {} ({}, {}ms)", model_id, accel, load_ms);
+                }
+            } else {
+                println!("{}", body);
+            }
+            let bench_path = format!(
+                ".pig_benchmarks/{}.jsonl",
+                model_id.replace(['/', ' '], "_")
+            );
             let model_id_bg = model_id.clone();
             let worker_bg = worker.clone();
             std::thread::spawn(move || {
                 models_benchmark_silent(model_id_bg, worker_bg);
             });
-            println!("Auto-benchmark running in background.");
+            println!("Auto-benchmark running in background → {}", bench_path);
         }
         Ok(r) => {
             eprintln!(
@@ -876,8 +892,56 @@ fn stream_generate(target: &WorkerEndpointConfig, request: &ModelRequest) {
     println!();
 }
 
-/// Runs a single benchmark generation and persists the record. Returns `(record,
-/// response, target_worker)` so callers can decide what to print.
+/// Recursively sum file sizes under a path (directory → walk; file → its own size).
+fn model_disk_size(path: &std::path::Path) -> Option<u64> {
+    let meta = std::fs::metadata(path).ok()?;
+    if meta.is_file() {
+        return Some(meta.len());
+    }
+    let mut total = 0u64;
+    let mut stack = vec![path.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if let Ok(m) = std::fs::metadata(&p) {
+                if m.is_file() {
+                    total += m.len();
+                } else if m.is_dir() {
+                    stack.push(p);
+                }
+            }
+        }
+    }
+    Some(total)
+}
+
+fn median_f64(mut vals: Vec<f64>) -> f64 {
+    vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let n = vals.len();
+    if n % 2 == 0 {
+        (vals[n / 2 - 1] + vals[n / 2]) / 2.0
+    } else {
+        vals[n / 2]
+    }
+}
+
+fn median_u64(mut vals: Vec<u64>) -> u64 {
+    vals.sort_unstable();
+    let n = vals.len();
+    if n % 2 == 0 {
+        (vals[n / 2 - 1] + vals[n / 2]) / 2
+    } else {
+        vals[n / 2]
+    }
+}
+
+const BENCHMARK_RUNS: usize = 3;
+
+/// Runs the benchmark prompt BENCHMARK_RUNS times and returns a record with
+/// median metrics. Returns `(record, last_response, target_worker)`.
 fn run_benchmark(
     model_id: &str,
     worker: Option<String>,
@@ -888,11 +952,10 @@ fn run_benchmark(
     let model_id_typed = ModelId::from(model_id);
     let file_size_bytes = registry
         .get(&model_id_typed)
-        .and_then(|entry| std::fs::metadata(&entry.path).ok())
-        .map(|meta| meta.len());
+        .and_then(|entry| model_disk_size(&entry.path));
     let coordinator = Coordinator::new(vec![target.clone()], registry);
 
-    let request = ModelRequest {
+    let make_request = || ModelRequest {
         request_id: RequestId::generate(),
         role: ModelRole::Reasoning,
         model: Some(ModelSelector::Id(model_id_typed.clone())),
@@ -912,7 +975,32 @@ fn run_benchmark(
         metadata: BTreeMap::new(),
     };
 
-    let response = coordinator.invoke(request);
+    let mut last_response = None;
+    let mut gen_tps_samples: Vec<f64> = Vec::new();
+    let mut prompt_tps_samples: Vec<f64> = Vec::new();
+    let mut ttft_samples: Vec<u64> = Vec::new();
+    let mut total_ms_samples: Vec<u64> = Vec::new();
+    let mut prompt_tokens_last = 0u32;
+    let mut generated_tokens_last = 0u32;
+
+    for _ in 0..BENCHMARK_RUNS {
+        let resp = coordinator.invoke(make_request());
+        if resp.is_success() {
+            if let Some(v) = resp.execution.generation_tokens_per_second {
+                gen_tps_samples.push(v);
+            }
+            if let Some(v) = resp.execution.prompt_tokens_per_second {
+                prompt_tps_samples.push(v);
+            }
+            ttft_samples.push(resp.execution.prompt_eval_ms);
+            total_ms_samples.push(resp.execution.total_ms);
+            prompt_tokens_last = resp.execution.prompt_tokens;
+            generated_tokens_last = resp.execution.generated_tokens;
+        }
+        last_response = Some(resp);
+    }
+
+    let response = last_response?;
 
     let worker_hardware_fingerprint = coordinator
         .snapshots()
@@ -920,6 +1008,27 @@ fn run_benchmark(
         .find(|snap| snap.worker_id == response.execution.worker_id)
         .and_then(|snap| snap.worker_hardware_fingerprint)
         .unwrap_or_default();
+
+    let gen_tps = if gen_tps_samples.is_empty() {
+        None
+    } else {
+        Some(median_f64(gen_tps_samples))
+    };
+    let prompt_tps = if prompt_tps_samples.is_empty() {
+        None
+    } else {
+        Some(median_f64(prompt_tps_samples))
+    };
+    let p50_ttft = if ttft_samples.is_empty() {
+        None
+    } else {
+        Some(median_u64(ttft_samples) as u32)
+    };
+    let total_ms = if total_ms_samples.is_empty() {
+        response.execution.total_ms
+    } else {
+        median_u64(total_ms_samples)
+    };
 
     let fingerprint = BenchmarkFingerprint {
         model_id: model_id_typed.clone(),
@@ -943,12 +1052,12 @@ fn run_benchmark(
             .unwrap_or(0),
         success: response.is_success(),
         model_load_ms: response.execution.model_load_ms,
-        prompt_tokens_per_second: response.execution.prompt_tokens_per_second,
-        generation_tokens_per_second: response.execution.generation_tokens_per_second,
-        total_ms: response.execution.total_ms,
-        prompt_tokens: response.execution.prompt_tokens,
-        generated_tokens: response.execution.generated_tokens,
-        p50_ttft_ms: None,
+        prompt_tokens_per_second: prompt_tps,
+        generation_tokens_per_second: gen_tps,
+        total_ms,
+        prompt_tokens: prompt_tokens_last,
+        generated_tokens: generated_tokens_last,
+        p50_ttft_ms: p50_ttft,
         p95_ttft_ms: None,
         pipeline_acceptance_rate: None,
     };
