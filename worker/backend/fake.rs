@@ -5,10 +5,12 @@
 use super::{
     BackendCapabilities, BackendError, BackendGenerationRequest, BackendGenerationResponse,
     BackendHealth, LoadModelRequest, LoadedModel, ModelAvailability, ModelBackend,
-    ModelEventSender, ModelStreamEvent,
+    ModelEventSender,
 };
 use async_trait::async_trait;
-use lao_orchestrator_core::model::{AcceleratorKind, FinishReason, MessageRole, ModelId};
+use lao_orchestrator_core::model::{
+    AcceleratorKind, FinishReason, MessageRole, ModelChunk, ModelId,
+};
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -59,6 +61,7 @@ impl ModelBackend for FakeBackend {
             version: Some("0.0.0-fake".to_string()),
             accelerators: vec![AcceleratorKind::Cpu],
             supports_streaming: true,
+            supports_tools: false,
             supports_embedding: false,
             supports_reranking: false,
         })
@@ -145,7 +148,7 @@ impl ModelBackend for FakeBackend {
             let piece = format!("{} ", word);
             produced.push_str(&piece);
             if events
-                .send(ModelStreamEvent::Token { text: piece })
+                .send(ModelChunk::TextDelta { text: piece })
                 .await
                 .is_err()
             {
@@ -161,8 +164,6 @@ impl ModelBackend for FakeBackend {
                 }
             }
         }
-        let _ = events.send(ModelStreamEvent::Done).await;
-
         let generation_ms = (count as u64) * self.token_delay.as_millis() as u64;
         Ok(BackendGenerationResponse {
             finish_reason: if count >= max_tokens {
@@ -181,6 +182,7 @@ impl ModelBackend for FakeBackend {
             } else {
                 Some(count as f64 / (generation_ms as f64 / 1000.0))
             },
+            tool_calls: vec![],
         })
     }
 }
@@ -246,8 +248,8 @@ mod tests {
         let mut tokens = Vec::new();
         while let Some(event) = rx.recv().await {
             match event {
-                ModelStreamEvent::Token { text } => tokens.push(text),
-                ModelStreamEvent::Done => break,
+                ModelChunk::TextDelta { text } => tokens.push(text),
+                _ => {}
             }
         }
         assert_eq!(tokens.len(), 3);

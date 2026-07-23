@@ -10,7 +10,8 @@ pub mod llama_cpp;
 
 use async_trait::async_trait;
 use lao_orchestrator_core::model::{
-    AcceleratorKind, FinishReason, GenerationParameters, ModelId, ModelMessage, RequestId,
+    AcceleratorKind, FinishReason, GenerationParameters, ModelChunk, ModelId, ModelMessage,
+    ModelToolCall, RequestId,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -60,6 +61,9 @@ pub struct BackendCapabilities {
     pub version: Option<String>,
     pub accelerators: Vec<AcceleratorKind>,
     pub supports_streaming: bool,
+    /// Whether this backend can honor OpenAI-style function/tool definitions and
+    /// return structured tool calls. Clients must not silently lose tool semantics.
+    pub supports_tools: bool,
     pub supports_embedding: bool,
     pub supports_reranking: bool,
 }
@@ -112,17 +116,10 @@ pub struct BackendGenerationResponse {
     pub generation_ms: u64,
     pub prompt_tokens_per_second: Option<f64>,
     pub generation_tokens_per_second: Option<f64>,
+    pub tool_calls: Vec<ModelToolCall>,
 }
 
-/// A single streamed generation event.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ModelStreamEvent {
-    Token { text: String },
-    Done,
-}
-
-pub type ModelEventSender = mpsc::Sender<ModelStreamEvent>;
+pub type ModelEventSender = mpsc::Sender<ModelChunk>;
 
 #[async_trait]
 pub trait ModelBackend: Send + Sync {

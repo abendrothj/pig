@@ -12,12 +12,16 @@
 use super::{
     BackendCapabilities, BackendError, BackendGenerationRequest, BackendGenerationResponse,
     BackendHealth, LoadModelRequest, LoadedModel, ModelAvailability, ModelBackend,
-    ModelEventSender, ModelStreamEvent,
+    ModelEventSender,
 };
 use async_trait::async_trait;
 use futures::StreamExt;
-use lao_orchestrator_core::model::{AcceleratorKind, FinishReason, MessageRole, ModelId};
+use lao_orchestrator_core::model::{
+    AcceleratorKind, FinishReason, MessageRole, ModelChunk, ModelId, ModelToolCall,
+    ModelToolFunction,
+};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::io::ErrorKind;
 use std::net::TcpListener;
 use std::path::PathBuf;
@@ -233,6 +237,30 @@ impl LlamaCppBackend {
     }
 }
 
+fn openai_messages(
+    messages: &[lao_orchestrator_core::model::ModelMessage],
+) -> Vec<serde_json::Value> {
+    messages
+        .iter()
+        .map(|message| {
+            let role = match message.role {
+                MessageRole::System => "system",
+                MessageRole::User => "user",
+                MessageRole::Assistant => "assistant",
+                MessageRole::Tool => "tool",
+            };
+            let mut value = serde_json::json!({"role": role, "content": message.content});
+            if !message.tool_calls.is_empty() {
+                value["tool_calls"] = serde_json::to_value(&message.tool_calls).unwrap_or_default();
+            }
+            if let Some(tool_call_id) = &message.tool_call_id {
+                value["tool_call_id"] = serde_json::json!(tool_call_id);
+            }
+            value
+        })
+        .collect()
+}
+
 #[async_trait]
 impl ModelBackend for LlamaCppBackend {
     async fn health(&self) -> Result<BackendHealth, BackendError> {
@@ -276,6 +304,7 @@ impl ModelBackend for LlamaCppBackend {
                 .chain(std::iter::once(AcceleratorKind::Cpu))
                 .collect(),
             supports_streaming: true,
+            supports_tools: true,
             supports_embedding: false,
             supports_reranking: false,
         })
@@ -430,18 +459,7 @@ impl ModelBackend for LlamaCppBackend {
             (server.base_url.clone(), server.stderr_tail.clone())
         };
 
-        let messages: Vec<serde_json::Value> = request
-            .messages
-            .iter()
-            .map(|m| {
-                let role = match m.role {
-                    MessageRole::System => "system",
-                    MessageRole::User => "user",
-                    MessageRole::Assistant => "assistant",
-                };
-                serde_json::json!({"role": role, "content": m.content})
-            })
-            .collect();
+        let messages = openai_messages(&request.messages);
 
         let mut body = serde_json::json!({
             "messages": messages,
@@ -468,6 +486,12 @@ impl ModelBackend for LlamaCppBackend {
         }
         if !p.stop.is_empty() {
             body["stop"] = serde_json::json!(p.stop);
+        }
+        if !p.tools.is_empty() {
+            body["tools"] = serde_json::json!(p.tools);
+        }
+        if let Some(tool_choice) = &p.tool_choice {
+            body["tool_choice"] = tool_choice.clone();
         }
 
         let url = format!("{}/v1/chat/completions", base_url);
@@ -497,6 +521,7 @@ impl ModelBackend for LlamaCppBackend {
         let mut generation_ms = 0u64;
         let mut prompt_tps = None;
         let mut gen_tps = None;
+        let mut tool_call_fragments = BTreeMap::new();
 
         loop {
             let chunk = tokio::select! {
@@ -540,7 +565,7 @@ impl ModelBackend for LlamaCppBackend {
                         content.push_str(delta_text);
                         completion_tokens += 1;
                         let _ = events
-                            .send(ModelStreamEvent::Token {
+                            .send(ModelChunk::TextDelta {
                                 text: delta_text.to_string(),
                             })
                             .await;
@@ -549,8 +574,18 @@ impl ModelBackend for LlamaCppBackend {
                         finish_reason = match reason {
                             "length" => FinishReason::Length,
                             "stop" => FinishReason::Stop,
+                            "tool_calls" => FinishReason::ToolCalls,
                             _ => FinishReason::Stop,
                         };
+                    }
+                    if let Some(calls) = delta
+                        .and_then(|value| value.get("tool_calls"))
+                        .and_then(|value| value.as_array())
+                    {
+                        for (fallback_index, call) in calls.iter().enumerate() {
+                            let _ = events.send(tool_call_delta(call, fallback_index)).await;
+                        }
+                        absorb_tool_call_fragments(&mut tool_call_fragments, calls);
                     }
                 }
                 if let Some(usage) = value.get("usage") {
@@ -589,8 +624,6 @@ impl ModelBackend for LlamaCppBackend {
             }
         }
 
-        let _ = events.send(ModelStreamEvent::Done).await;
-
         Ok(BackendGenerationResponse {
             finish_reason,
             content,
@@ -600,13 +633,88 @@ impl ModelBackend for LlamaCppBackend {
             generation_ms,
             prompt_tokens_per_second: prompt_tps,
             generation_tokens_per_second: gen_tps,
+            tool_calls: finish_tool_call_fragments(tool_call_fragments),
         })
     }
+}
+
+#[derive(Default)]
+struct ToolCallFragments {
+    id: Option<String>,
+    name: String,
+    arguments: String,
+}
+
+/// OpenAI-compatible streaming responses may split a call across several deltas.
+/// Keep those pieces structured until the completed worker response is assembled.
+fn absorb_tool_call_fragments(
+    fragments: &mut BTreeMap<usize, ToolCallFragments>,
+    calls: &[serde_json::Value],
+) {
+    for (fallback_index, call) in calls.iter().enumerate() {
+        let index = call
+            .get("index")
+            .and_then(|index| index.as_u64())
+            .map(|index| index as usize)
+            .unwrap_or(fallback_index);
+        let fragment = fragments.entry(index).or_default();
+        if let Some(id) = call.get("id").and_then(|id| id.as_str()) {
+            fragment.id = Some(id.to_string());
+        }
+        if let Some(function) = call.get("function") {
+            if let Some(name) = function.get("name").and_then(|name| name.as_str()) {
+                fragment.name.push_str(name);
+            }
+            if let Some(arguments) = function.get("arguments").and_then(|value| value.as_str()) {
+                fragment.arguments.push_str(arguments);
+            }
+        }
+    }
+}
+
+fn tool_call_delta(value: &serde_json::Value, fallback_index: usize) -> ModelChunk {
+    let index = value
+        .get("index")
+        .and_then(|index| index.as_u64())
+        .map(|index| index as usize)
+        .unwrap_or(fallback_index);
+    let function = value.get("function");
+    ModelChunk::ToolCallDelta {
+        index,
+        id: value
+            .get("id")
+            .and_then(|id| id.as_str())
+            .map(str::to_string),
+        function_name: function
+            .and_then(|function| function.get("name"))
+            .and_then(|name| name.as_str())
+            .map(str::to_string),
+        arguments_delta: function
+            .and_then(|function| function.get("arguments"))
+            .and_then(|arguments| arguments.as_str())
+            .map(str::to_string),
+    }
+}
+
+fn finish_tool_call_fragments(fragments: BTreeMap<usize, ToolCallFragments>) -> Vec<ModelToolCall> {
+    fragments
+        .into_values()
+        .filter_map(|fragment| {
+            Some(ModelToolCall {
+                id: fragment.id?,
+                function: ModelToolFunction {
+                    name: fragment.name,
+                    arguments: fragment.arguments,
+                },
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lao_orchestrator_core::model::{ModelMessage, ModelToolCall, ModelToolFunction};
 
     #[test]
     fn execution_config_round_trips_through_json() {
@@ -635,5 +743,89 @@ mod tests {
         });
         let health = backend.health().await.unwrap();
         assert!(!health.available);
+    }
+
+    #[test]
+    fn typed_tool_history_is_sent_as_structured_openai_messages() {
+        let messages = openai_messages(&[
+            ModelMessage {
+                role: MessageRole::Assistant,
+                content: String::new(),
+                tool_calls: vec![ModelToolCall {
+                    id: "call_lookup".to_string(),
+                    function: ModelToolFunction {
+                        name: "lookup".to_string(),
+                        arguments: r#"{"id":42}"#.to_string(),
+                    },
+                }],
+                tool_call_id: None,
+            },
+            ModelMessage {
+                role: MessageRole::Tool,
+                content: r#"{"name":"LAO"}"#.to_string(),
+                tool_calls: vec![],
+                tool_call_id: Some("call_lookup".to_string()),
+            },
+        ]);
+
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[0]["tool_calls"][0]["id"], "call_lookup");
+        assert_eq!(
+            messages[0]["tool_calls"][0]["function"]["arguments"],
+            r#"{"id":42}"#
+        );
+        assert_eq!(messages[1]["role"], "tool");
+        assert_eq!(messages[1]["tool_call_id"], "call_lookup");
+    }
+
+    #[test]
+    fn streamed_tool_call_fragments_are_reassembled_by_index() {
+        let mut fragments = BTreeMap::new();
+        absorb_tool_call_fragments(
+            &mut fragments,
+            &[serde_json::json!({
+                "index": 0,
+                "id": "call_1",
+                "function": {"name": "read", "arguments": "{\"path\":"}
+            })],
+        );
+        absorb_tool_call_fragments(
+            &mut fragments,
+            &[serde_json::json!({
+                "index": 0,
+                "function": {"arguments": "\"src/lib.rs\"}"}
+            })],
+        );
+
+        assert_eq!(
+            finish_tool_call_fragments(fragments),
+            vec![ModelToolCall {
+                id: "call_1".to_string(),
+                function: ModelToolFunction {
+                    name: "read".to_string(),
+                    arguments: r#"{"path":"src/lib.rs"}"#.to_string(),
+                },
+            }]
+        );
+    }
+
+    #[test]
+    fn tool_call_delta_preserves_partial_arguments_and_call_identity() {
+        assert_eq!(
+            tool_call_delta(
+                &serde_json::json!({
+                    "index": 2,
+                    "id": "call_read",
+                    "function": {"name": "read_file", "arguments": "{\"path\":"}
+                }),
+                0,
+            ),
+            ModelChunk::ToolCallDelta {
+                index: 2,
+                id: Some("call_read".to_string()),
+                function_name: Some("read_file".to_string()),
+                arguments_delta: Some(r#"{"path":"#.to_string()),
+            }
+        );
     }
 }

@@ -82,8 +82,8 @@ async fn successful_startup_and_generation_captures_content_and_reasoning() {
     let mut tokens = Vec::new();
     while let Some(event) = rx.recv().await {
         match event {
-            lao_worker::backend::ModelStreamEvent::Token { text } => tokens.push(text),
-            lao_worker::backend::ModelStreamEvent::Done => break,
+            lao_orchestrator_core::model::ModelChunk::TextDelta { text } => tokens.push(text),
+            _ => {}
         }
     }
     assert_eq!(tokens, vec!["Hello", " (thinking)", " world"]);

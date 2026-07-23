@@ -124,12 +124,37 @@ pub enum MessageRole {
     System,
     User,
     Assistant,
+    Tool,
+}
+
+/// A model-requested function invocation. This is intentionally protocol-neutral:
+/// OpenAI compatibility maps its `function` tool-call shape here, while the
+/// scheduler only carries it as model context and never interprets it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelToolCall {
+    pub id: String,
+    pub function: ModelToolFunction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelToolFunction {
+    pub name: String,
+    /// JSON text supplied by the model. It remains text because models can emit an
+    /// incomplete or invalid object; the agent runtime owns schema validation.
+    pub arguments: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelMessage {
     pub role: MessageRole,
+    /// Text content remains available for ordinary chat and existing workflows.
     pub content: String,
+    /// Present only on assistant messages which requested tool execution.
+    #[serde(default)]
+    pub tool_calls: Vec<ModelToolCall>,
+    /// Present only on a tool-result message and links it to its assistant call.
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
 }
 
 impl ModelMessage {
@@ -137,6 +162,8 @@ impl ModelMessage {
         Self {
             role: MessageRole::System,
             content: content.into(),
+            tool_calls: vec![],
+            tool_call_id: None,
         }
     }
 
@@ -144,6 +171,8 @@ impl ModelMessage {
         Self {
             role: MessageRole::User,
             content: content.into(),
+            tool_calls: vec![],
+            tool_call_id: None,
         }
     }
 }
@@ -166,6 +195,9 @@ pub struct GenerationParameters {
     #[serde(default)]
     pub stop: Vec<String>,
     pub response_format: Option<ResponseFormat>,
+    #[serde(default)]
+    pub tools: Vec<serde_json::Value>,
+    pub tool_choice: Option<serde_json::Value>,
 }
 
 impl GenerationParameters {
@@ -366,6 +398,7 @@ pub enum ModelResponseStatus {
 pub enum FinishReason {
     Stop,
     Length,
+    ToolCalls,
     Cancelled,
     TimedOut,
     Error,
@@ -427,6 +460,28 @@ pub struct ModelUsage {
     pub total_tokens: u32,
 }
 
+/// One ordered piece of an in-progress model response. This is LAO's canonical
+/// streaming contract: it describes model output, not an HTTP or SSE wire format.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ModelChunk {
+    TextDelta {
+        text: String,
+    },
+    /// A partial function call. `id` and `function_name` normally arrive in the
+    /// first chunk; later chunks may contain only argument text.
+    ToolCallDelta {
+        index: usize,
+        id: Option<String>,
+        function_name: Option<String>,
+        arguments_delta: Option<String>,
+    },
+    Finished {
+        finish_reason: FinishReason,
+        usage: Option<ModelUsage>,
+    },
+}
+
 /// Structured failure detail. Failures are never communicated via `output` text.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -477,6 +532,8 @@ pub struct ModelResponse {
     pub model: ResolvedModel,
     pub execution: ModelExecutionMetadata,
     pub usage: ModelUsage,
+    #[serde(default)]
+    pub tool_calls: Vec<ModelToolCall>,
     pub error: Option<ModelExecutionError>,
 }
 
@@ -559,6 +616,7 @@ mod tests {
                 completion_tokens: 40,
                 total_tokens: 52,
             },
+            tool_calls: vec![],
             error: None,
         }
     }
@@ -569,6 +627,72 @@ mod tests {
         let json = serde_json::to_string(&req).unwrap();
         let back: ModelRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(req, back);
+    }
+
+    #[test]
+    fn tool_call_history_round_trips_through_json() {
+        let mut request = sample_request();
+        request.messages = vec![
+            ModelMessage {
+                role: MessageRole::Assistant,
+                content: String::new(),
+                tool_calls: vec![ModelToolCall {
+                    id: "call_weather".to_string(),
+                    function: ModelToolFunction {
+                        name: "weather".to_string(),
+                        arguments: r#"{"city":"San Francisco"}"#.to_string(),
+                    },
+                }],
+                tool_call_id: None,
+            },
+            ModelMessage {
+                role: MessageRole::Tool,
+                content: r#"{"temperature_f":62}"#.to_string(),
+                tool_calls: vec![],
+                tool_call_id: Some("call_weather".to_string()),
+            },
+        ];
+
+        let json = serde_json::to_string(&request).unwrap();
+        let back: ModelRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(request, back);
+        assert_eq!(
+            back.messages[1].tool_call_id.as_deref(),
+            Some("call_weather")
+        );
+    }
+
+    #[test]
+    fn model_chunks_preserve_partial_tool_arguments() {
+        let chunks = vec![
+            ModelChunk::TextDelta {
+                text: "Looking that up".to_string(),
+            },
+            ModelChunk::ToolCallDelta {
+                index: 1,
+                id: Some("call_lookup".to_string()),
+                function_name: Some("lookup".to_string()),
+                arguments_delta: Some(r#"{"path":"src/lib"#.to_string()),
+            },
+            ModelChunk::ToolCallDelta {
+                index: 1,
+                id: None,
+                function_name: None,
+                arguments_delta: Some(r#".rs"}"#.to_string()),
+            },
+            ModelChunk::Finished {
+                finish_reason: FinishReason::ToolCalls,
+                usage: Some(ModelUsage {
+                    prompt_tokens: 4,
+                    completion_tokens: 2,
+                    total_tokens: 6,
+                }),
+            },
+        ];
+
+        let json = serde_json::to_string(&chunks).unwrap();
+        let back: Vec<ModelChunk> = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, chunks);
     }
 
     #[test]

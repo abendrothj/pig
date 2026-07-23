@@ -3,10 +3,10 @@
 //! explicit unsupported-capability response rather than pretending to work).
 //!
 //! Streaming uses Server-Sent Events: `POST /v1/generate` with `"stream": true`
-//! returns `text/event-stream`, one `event: token` per generated piece of text,
+//! returns `text/event-stream`, canonical `event: chunk` records during inference,
 //! followed by one `event: response` carrying the final structured `ModelResponse`.
 
-use crate::backend::{BackendError, LoadModelRequest, ModelStreamEvent};
+use crate::backend::{BackendError, LoadModelRequest};
 use crate::job::{JobRecord, QueueError, ResolvedGeneration};
 use crate::state::AppState;
 use axum::body::Body;
@@ -104,6 +104,7 @@ async fn auth_middleware(
 struct HealthResponse {
     status: String,
     worker_id: String,
+    coordinator_id: Option<String>,
     uptime_seconds: u64,
     backend_available: bool,
     backend_detail: String,
@@ -120,6 +121,7 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
     Json(HealthResponse {
         status: if available { "ok" } else { "degraded" }.to_string(),
         worker_id: state.config.id.clone(),
+        coordinator_id: state.config.coordinator_id.clone(),
         uptime_seconds: state.started_at.elapsed().as_secs(),
         backend_available: available,
         backend_detail: detail,
@@ -431,14 +433,10 @@ async fn generate(
     };
 
     if body.stream {
-        let token_stream = tokio_stream::wrappers::ReceiverStream::new(events)
-            .take_while(|e| futures::future::ready(!matches!(e, ModelStreamEvent::Done)))
-            .map(|e| {
-                let ModelStreamEvent::Token { text } = e else {
-                    unreachable!("Done events are filtered by take_while")
-                };
-                Ok::<_, Infallible>(Event::default().event("token").data(text))
-            });
+        let chunk_stream = tokio_stream::wrappers::ReceiverStream::new(events).map(|chunk| {
+            let payload = serde_json::to_string(&chunk).unwrap_or_default();
+            Ok::<_, Infallible>(Event::default().event("chunk").data(payload))
+        });
 
         let runtime = state.runtime.clone();
         let final_stream = futures::stream::once(async move {
@@ -455,7 +453,7 @@ async fn generate(
             }
         });
 
-        Sse::new(token_stream.chain(final_stream)).into_response()
+        Sse::new(chunk_stream.chain(final_stream)).into_response()
     } else {
         // Drain rather than drop: a dropped receiver looks like a disconnected
         // streaming client to the backend (see FakeBackend/LlamaCppBackend, which stop

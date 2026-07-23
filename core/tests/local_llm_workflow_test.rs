@@ -64,6 +64,7 @@ impl ModelInvoker for FakeInvoker {
                 completion_tokens: 1,
                 total_tokens: 2,
             },
+            tool_calls: vec![],
             error: None,
         }
     }
@@ -111,6 +112,7 @@ impl ModelInvoker for FailingInvoker {
                 peak_vram_bytes: None,
             },
             usage: ModelUsage::default(),
+            tool_calls: vec![],
             error: Some(
                 lao_orchestrator_core::model::ModelExecutionError::BackendError {
                     message: "simulated backend failure".to_string(),

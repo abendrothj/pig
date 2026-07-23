@@ -4,12 +4,10 @@
 //! Lifecycle: `Queued -> Loading -> Running -> {Succeeded, Failed, Cancelled,
 //! TimedOut}`. A job never regresses out of a terminal state.
 
-use crate::backend::{
-    BackendError, BackendGenerationRequest, LoadModelRequest, ModelBackend, ModelStreamEvent,
-};
+use crate::backend::{BackendError, BackendGenerationRequest, LoadModelRequest, ModelBackend};
 use lao_orchestrator_core::execution::Artifact;
 use lao_orchestrator_core::model::{
-    CancellationInfo, CancellationReason, FinishReason, JobId, ModelExecutionError,
+    CancellationInfo, CancellationReason, FinishReason, JobId, ModelChunk, ModelExecutionError,
     ModelExecutionMetadata, ModelId, ModelRequest, ModelResponse, ModelResponseStatus, ModelUsage,
     RequestId, ResolvedModel,
 };
@@ -230,7 +228,7 @@ impl WorkerRuntime {
         request: ModelRequest,
         resolved: ResolvedGeneration,
         timeout_override: Option<Duration>,
-    ) -> Result<(JobId, mpsc::Receiver<ModelStreamEvent>), QueueError> {
+    ) -> Result<(JobId, mpsc::Receiver<ModelChunk>), QueueError> {
         let queue_permit = match self.queue_slots.clone().try_acquire_owned() {
             Ok(permit) => permit,
             Err(_) => return Err(QueueError::QueueFull),
@@ -374,7 +372,7 @@ async fn run_job(
     request: ModelRequest,
     resolved: ResolvedGeneration,
     cancellation: CancellationToken,
-    event_tx: mpsc::Sender<ModelStreamEvent>,
+    event_tx: mpsc::Sender<ModelChunk>,
     timeout: Duration,
     queue_permit: OwnedSemaphorePermit,
 ) {
@@ -404,9 +402,15 @@ async fn run_job(
                 model: resolved_model(&ctx, &resolved, &request),
                 execution: metadata,
                 usage: ModelUsage::default(),
+                tool_calls: vec![],
                 error: Some(ModelExecutionError::Cancelled),
             };
+            let terminal = ModelChunk::Finished {
+                finish_reason: response.finish_reason,
+                usage: Some(response.usage),
+            };
             finish(&ctx, JobStatus::Cancelled, response).await;
+            let _ = event_tx.send(terminal).await;
             return;
         }
     };
@@ -462,8 +466,6 @@ async fn run_job(
     let outcome = tokio::time::timeout(timeout, work).await;
     drop(permit);
     let total_ms = queue_start.elapsed().as_millis() as u64;
-    let _ = event_tx.send(ModelStreamEvent::Done).await;
-
     let mut metadata = base_metadata(&ctx, &resolved, queue_wait_ms);
     metadata.total_ms = total_ms;
 
@@ -484,6 +486,7 @@ async fn run_job(
                     model: resolved_model(&ctx, &resolved, &request),
                     execution: metadata,
                     usage: ModelUsage::default(),
+                    tool_calls: vec![],
                     error: Some(ModelExecutionError::Timeout {
                         after_ms: timeout.as_millis() as u64,
                     }),
@@ -505,6 +508,7 @@ async fn run_job(
                     model: resolved_model(&ctx, &resolved, &request),
                     execution: metadata,
                     usage: ModelUsage::default(),
+                    tool_calls: vec![],
                     error: Some(ModelExecutionError::Cancelled),
                 },
             )
@@ -519,6 +523,7 @@ async fn run_job(
                 model: resolved_model(&ctx, &resolved, &request),
                 execution: metadata,
                 usage: ModelUsage::default(),
+                tool_calls: vec![],
                 error: Some(ModelExecutionError::BackendError {
                     message: e.to_string(),
                 }),
@@ -563,13 +568,19 @@ async fn run_job(
                     model: resolved_model(&ctx, &resolved, &request),
                     execution: metadata,
                     usage,
+                    tool_calls: generation.tool_calls,
                     error: None,
                 },
             )
         }
     };
 
+    let terminal = ModelChunk::Finished {
+        finish_reason: response.finish_reason,
+        usage: Some(response.usage),
+    };
     finish(&ctx, status, response).await;
+    let _ = event_tx.send(terminal).await;
 }
 
 #[cfg(test)]

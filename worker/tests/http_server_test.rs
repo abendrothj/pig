@@ -166,7 +166,7 @@ async fn load_then_generate_non_streaming_succeeds() {
 }
 
 #[tokio::test]
-async fn generate_streams_sse_tokens_then_final_response() {
+async fn generate_streams_sse_chunks_then_final_response() {
     let (base, _state) = spawn_test_server(2, 8, None, None).await;
     let client = reqwest::Client::new();
 
@@ -191,7 +191,7 @@ async fn generate_streams_sse_tokens_then_final_response() {
             break;
         }
     }
-    assert!(body.contains("event: token"));
+    assert!(body.contains("event: chunk"));
     assert!(body.contains("event: response"));
 }
 
