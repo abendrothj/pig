@@ -79,7 +79,7 @@ pub struct BenchmarkRecord {
 }
 
 pub fn benchmark_store_dir() -> PathBuf {
-    PathBuf::from(".lao_benchmarks")
+    PathBuf::from(".pig_benchmarks")
 }
 
 fn benchmark_file_path(model_id: &ModelId) -> PathBuf {

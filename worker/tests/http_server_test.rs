@@ -2,12 +2,12 @@
 //! installed model runtime required). Each test spins up a real axum server on an
 //! ephemeral port and talks to it over real HTTP via reqwest.
 
-use lao_orchestrator_core::model::{ModelEntry, ModelId, ModelRegistry, ModelRole};
-use lao_worker::backend::fake::FakeBackend;
-use lao_worker::config::WorkerConfig;
-use lao_worker::hardware::HardwareInfo;
-use lao_worker::job::WorkerRuntime;
-use lao_worker::state::AppState;
+use pig_core::model::{ModelEntry, ModelId, ModelRegistry, ModelRole};
+use pig_worker::backend::fake::FakeBackend;
+use pig_worker::config::WorkerConfig;
+use pig_worker::hardware::HardwareInfo;
+use pig_worker::job::WorkerRuntime;
+use pig_worker::state::AppState;
 use std::collections::BTreeMap;
 use std::net::TcpListener as StdTcpListener;
 use std::sync::Arc;
@@ -43,7 +43,7 @@ async fn spawn_test_server(
     roles.insert(ModelRole::Reasoning, vec![ModelId::from("m1")]);
     let registry = ModelRegistry::new(vec![entry], roles).unwrap();
 
-    let backend: Arc<dyn lao_worker::backend::ModelBackend> = match token_delay {
+    let backend: Arc<dyn pig_worker::backend::ModelBackend> = match token_delay {
         Some(d) => Arc::new(FakeBackend::with_token_delay(d)),
         None => Arc::new(FakeBackend::new()),
     };
@@ -73,7 +73,7 @@ async fn spawn_test_server(
         hardware_cache: std::sync::Mutex::new(None),
     });
 
-    let app = lao_worker::server::router(state.clone());
+    let app = pig_worker::server::router(state.clone());
     let tokio_listener = tokio::net::TcpListener::from_std(std_listener).unwrap();
     tokio::spawn(async move {
         axum::serve(tokio_listener, app).await.ok();

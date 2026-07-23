@@ -32,19 +32,19 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build CLI (release)
-        run: cargo build --release --bin lao-cli
+        run: cargo build --release --bin pig
 
       - name: Package artifacts
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          STAGING="lao-${VERSION}-${{ matrix.target }}"
+          STAGING="pig-${VERSION}-${{ matrix.target }}"
           mkdir -p "${STAGING}/bin"
-          cp target/release/lao-cli "${STAGING}/bin/"
-          cp README.md lao.toml.example "${STAGING}/"
-          tar czf "lao-${VERSION}-${{ matrix.target }}.tar.gz" "${STAGING}"
+          cp target/release/pig "${STAGING}/bin/"
+          cp README.md pig.toml.example "${STAGING}/"
+          tar czf "pig-${VERSION}-${{ matrix.target }}.tar.gz" "${STAGING}"
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
         with:
-          files: lao-*-${{ matrix.target }}.*
+          files: pig-*-${{ matrix.target }}.*

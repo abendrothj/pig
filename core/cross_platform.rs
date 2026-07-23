@@ -183,7 +183,7 @@ impl PathUtils {
         // Use platform-specific cache directory
         Platform::cache_dir()
             .unwrap_or_else(|| PathBuf::from("cache"))
-            .join("lao")
+            .join("pig")
     }
 
     /// Get the LAO config directory
@@ -196,7 +196,7 @@ impl PathUtils {
         // Use platform-specific config directory
         Platform::config_dir()
             .unwrap_or_else(|| PathBuf::from(".config"))
-            .join("lao")
+            .join("pig")
     }
 }
 

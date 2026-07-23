@@ -1,6 +1,6 @@
 //! Worker configuration: `[worker]` (identity, binding, concurrency, auth, backend
 //! selection) plus the shared `[models.*]` registry format (see
-//! `lao_orchestrator_core::model::registry`) read from the same file.
+//! `pig_core::model::registry`) read from the same file.
 
 use serde::Deserialize;
 use std::fmt;

@@ -3,7 +3,7 @@
 //! rather than crashing the worker or fabricating a value. Uncertainty is represented
 //! explicitly — a `None` here means "not measured," not "zero."
 
-use lao_orchestrator_core::model::AcceleratorKind;
+use pig_core::model::AcceleratorKind;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 

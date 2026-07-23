@@ -1,27 +1,27 @@
 //! Handlers for `worker`, `workers`, `models`, `route`, and `jobs` — the v0.5
 //! local-inference CLI surface. Config (model registry + worker list) is read from
-//! the same `lao.toml` resolution `TrustPolicy` already uses (`LAO_CONFIG`, else
-//! `lao.toml`, else `config/lao.toml`), rather than inventing a parallel convention.
+//! the same `pig.toml` resolution `TrustPolicy` already uses (`PIG_CONFIG`, else
+//! `pig.toml`, else `config/pig.toml`), rather than inventing a parallel convention.
 
 use crate::profiles::Profile;
-use lao_orchestrator_core::model::{
+use pig_core::model::{
     load_benchmark_records, record_benchmark, BenchmarkFingerprint, BenchmarkFreshness,
     BenchmarkRecord, CoordinatorMetricsSnapshot, GenerationParameters, MessageRole, ModelChunk,
     ModelId, ModelInvoker, ModelLoadState, ModelMessage, ModelRegistry, ModelRequest,
     ModelRequirements, ModelRole, ModelSelector, RequestId, SchedulingOverrides,
     WorkerLifecycleState, WorkerMetricsSnapshot, METRICS_SCHEMA_VERSION,
 };
-use lao_worker::coordinator::{Coordinator, WorkerEndpointConfig, WorkersConfig};
+use pig_worker::coordinator::{Coordinator, WorkerEndpointConfig, WorkersConfig};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::time::Instant;
 
 fn config_path() -> Option<String> {
-    if let Ok(p) = std::env::var("LAO_CONFIG") {
+    if let Ok(p) = std::env::var("PIG_CONFIG") {
         return Some(p);
     }
-    for candidate in ["lao.toml", "config/lao.toml"] {
+    for candidate in ["pig.toml", "config/pig.toml"] {
         if std::path::Path::new(candidate).exists() {
             return Some(candidate.to_string());
         }
@@ -87,7 +87,7 @@ fn load_workers() -> Vec<WorkerEndpointConfig> {
 fn require_workers() -> Vec<WorkerEndpointConfig> {
     let workers = load_workers();
     if workers.is_empty() {
-        eprintln!("[ERROR] no [[workers]] configured in lao.toml (or LAO_CONFIG)");
+        eprintln!("[ERROR] no [[workers]] configured in pig.toml (or PIG_CONFIG)");
         std::process::exit(1);
     }
     workers
@@ -101,8 +101,8 @@ fn require_workers() -> Vec<WorkerEndpointConfig> {
 // ---------------------------------------------------------------------------
 
 pub fn worker_serve(config: Option<String>) {
-    let path = config.unwrap_or_else(|| "lao.toml".to_string());
-    let worker_config = match lao_worker::config::WorkerConfig::load(std::path::Path::new(&path)) {
+    let path = config.unwrap_or_else(|| "pig.toml".to_string());
+    let worker_config = match pig_worker::config::WorkerConfig::load(std::path::Path::new(&path)) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("[ERROR] {}", e);
@@ -111,15 +111,15 @@ pub fn worker_serve(config: Option<String>) {
     };
     let registry_text = std::fs::read_to_string(&path).unwrap_or_default();
     let registry = ModelRegistry::from_toml_str(&registry_text).unwrap_or_default();
-    let hardware = lao_worker::hardware::discover();
+    let hardware = pig_worker::hardware::discover();
     let host_name = hardware.hostname.clone();
 
     let rt = tokio::runtime::Runtime::new().expect("failed to build tokio runtime");
     rt.block_on(async move {
-        let backend: std::sync::Arc<dyn lao_worker::backend::ModelBackend> =
+        let backend: std::sync::Arc<dyn pig_worker::backend::ModelBackend> =
             if worker_config.runtime.llama_cpp.enabled {
-                std::sync::Arc::new(lao_worker::backend::llama_cpp::LlamaCppBackend::new(
-                    lao_worker::backend::llama_cpp::LlamaCppConfig {
+                std::sync::Arc::new(pig_worker::backend::llama_cpp::LlamaCppBackend::new(
+                    pig_worker::backend::llama_cpp::LlamaCppConfig {
                         server_executable: PathBuf::from(
                             &worker_config.runtime.llama_cpp.server_executable,
                         ),
@@ -129,7 +129,7 @@ pub fn worker_serve(config: Option<String>) {
                     },
                 ))
             } else {
-                std::sync::Arc::new(lao_worker::backend::fake::FakeBackend::new())
+                std::sync::Arc::new(pig_worker::backend::fake::FakeBackend::new())
             };
         let backend_name = if worker_config.runtime.llama_cpp.enabled {
             "llama_cpp"
@@ -151,7 +151,7 @@ pub fn worker_serve(config: Option<String>) {
             worker_config.id, worker_config.bind, backend_name
         );
 
-        let runtime = std::sync::Arc::new(lao_worker::job::WorkerRuntime::new(
+        let runtime = std::sync::Arc::new(pig_worker::job::WorkerRuntime::new(
             worker_config.id.clone(),
             host_name,
             backend,
@@ -160,7 +160,7 @@ pub fn worker_serve(config: Option<String>) {
             worker_config.max_queued_jobs,
             worker_config.llama_cpp_request_timeout(),
         ));
-        let state = std::sync::Arc::new(lao_worker::state::AppState {
+        let state = std::sync::Arc::new(pig_worker::state::AppState {
             config: worker_config,
             runtime,
             registry,
@@ -171,7 +171,7 @@ pub fn worker_serve(config: Option<String>) {
             hardware_cache: std::sync::Mutex::new(None),
         });
 
-        if let Err(e) = lao_worker::server::serve(state).await {
+        if let Err(e) = pig_worker::server::serve(state).await {
             eprintln!("[ERROR] worker server failed: {}", e);
             std::process::exit(1);
         }
@@ -191,7 +191,7 @@ pub fn workers_list(json: bool, profile: &Profile) {
         )
         .and_then(|request| request.send().map_err(|e| e.to_string()))
         .and_then(|response| response.error_for_status().map_err(|e| e.to_string()));
-        let snapshots: Vec<lao_orchestrator_core::model::WorkerSnapshot> = match response {
+        let snapshots: Vec<pig_core::model::WorkerSnapshot> = match response {
             Ok(response) => match response.json() {
                 Ok(value) => value,
                 Err(e) => {
@@ -213,7 +213,7 @@ pub fn workers_list(json: bool, profile: &Profile) {
     print_snapshots(&snapshots, json);
 }
 
-fn print_snapshots(snapshots: &[lao_orchestrator_core::model::WorkerSnapshot], json: bool) {
+fn print_snapshots(snapshots: &[pig_core::model::WorkerSnapshot], json: bool) {
     if json {
         println!(
             "{}",
@@ -260,7 +260,7 @@ pub fn workers_inspect(worker_id: String, json: bool, profile: &Profile) {
         )
         .and_then(|request| request.send().map_err(|e| e.to_string()))
         .and_then(|response| response.error_for_status().map_err(|e| e.to_string()));
-        let snapshots: Vec<lao_orchestrator_core::model::WorkerSnapshot> =
+        let snapshots: Vec<pig_core::model::WorkerSnapshot> =
             match response.and_then(|r| r.json().map_err(|e| e.to_string())) {
                 Ok(value) => value,
                 Err(e) => {
@@ -302,7 +302,7 @@ pub fn workers_inspect(worker_id: String, json: bool, profile: &Profile) {
     }
 }
 
-fn snapshot_json(snapshots: &[lao_orchestrator_core::model::WorkerSnapshot]) -> serde_json::Value {
+fn snapshot_json(snapshots: &[pig_core::model::WorkerSnapshot]) -> serde_json::Value {
     serde_json::json!(snapshots
         .iter()
         .map(|s| serde_json::json!({
@@ -592,7 +592,7 @@ pub fn models_inspect(model_id: String, json: bool) {
 }
 
 pub fn models_discover(directory: String) {
-    let found = lao_orchestrator_core::model::discover_gguf_files(std::path::Path::new(&directory));
+    let found = pig_core::model::discover_gguf_files(std::path::Path::new(&directory));
     if found.is_empty() {
         println!("No .gguf files found under {}.", directory);
         return;
@@ -781,7 +781,7 @@ pub fn models_generate(
         );
     } else {
         match &response.output {
-            lao_orchestrator_core::artifact::Artifact::Text(t) => println!("{}", t),
+            pig_core::artifact::Artifact::Text(t) => println!("{}", t),
             other => println!("{:?}", other),
         }
         eprintln!(
@@ -1011,7 +1011,7 @@ pub fn route_explain(role: Option<String>, model: Option<String>, json: bool, pr
 }
 
 fn explanation_json(
-    explanation: &lao_orchestrator_core::model::RoutingExplanation,
+    explanation: &pig_core::model::RoutingExplanation,
 ) -> serde_json::Value {
     serde_json::json!({
         "selected": explanation.selected.as_ref().map(|p| serde_json::json!({
@@ -1195,7 +1195,7 @@ pub fn jobs_cancel(job_id: String, worker: String, profile: &Profile) {
 #[cfg(test)]
 mod metrics_formatting_tests {
     use super::*;
-    use lao_orchestrator_core::model::{
+    use pig_core::model::{
         AcceleratorKind, AcceleratorMetrics, JobMetrics, ModelMetrics, QueueMetrics, SystemMetrics,
         ThroughputMetrics, WorkerId, WorkerIdentityMetrics,
     };

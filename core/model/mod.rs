@@ -2,7 +2,7 @@
 //! registry mapping roles to physical models (`registry`), hardware-aware routing
 //! (`scheduler`), and the coordinator-side HTTP client for talking to a worker
 //! (`worker_client`). Worker-side process supervision (the llama.cpp backend, the HTTP
-//! server, job queueing) lives in the separate `lao-worker` crate — LAO's core process
+//! server, job queueing) lives in the separate `pig-worker` crate — pig's core process
 //! never links a model runtime directly.
 
 pub mod benchmark;

@@ -8,8 +8,8 @@
 //!
 //! No exporters, no persistent time-series storage, no aggregation framework here by
 //! design - this is the schema plus the plain structs that carry it; a worker HTTP
-//! endpoint and a CLI command are the only consumers today, in `lao-worker` and
-//! `lao-cli` respectively.
+//! endpoint and a CLI command are the only consumers today, in `pig-worker` and
+//! `pig` respectively.
 
 use crate::model::types::{AcceleratorKind, ModelId, WorkerId};
 use serde::{Deserialize, Serialize};

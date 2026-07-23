@@ -2,16 +2,16 @@
 //! worker HTTP servers (fake backend), covering routing, failover to a second worker
 //! when the first is unreachable, and total unavailability.
 
-use lao_orchestrator_core::model::{
+use pig_core::model::{
     GenerationParameters, ModelEntry, ModelId, ModelInvoker, ModelMessage, ModelRegistry,
     ModelRequest, ModelRequirements, ModelResponseStatus, ModelRole, RequestId,
 };
-use lao_worker::backend::fake::FakeBackend;
-use lao_worker::config::WorkerConfig;
-use lao_worker::coordinator::{Coordinator, WorkerEndpointConfig};
-use lao_worker::hardware::HardwareInfo;
-use lao_worker::job::WorkerRuntime;
-use lao_worker::state::AppState;
+use pig_worker::backend::fake::FakeBackend;
+use pig_worker::config::WorkerConfig;
+use pig_worker::coordinator::{Coordinator, WorkerEndpointConfig};
+use pig_worker::hardware::HardwareInfo;
+use pig_worker::job::WorkerRuntime;
+use pig_worker::state::AppState;
 use std::collections::BTreeMap;
 use std::net::TcpListener as StdTcpListener;
 use std::sync::Arc;
@@ -44,7 +44,7 @@ async fn spawn_worker(id: &str) -> String {
     std_listener.set_nonblocking(true).unwrap();
     let addr = std_listener.local_addr().unwrap();
 
-    let backend: Arc<dyn lao_worker::backend::ModelBackend> = Arc::new(FakeBackend::new());
+    let backend: Arc<dyn pig_worker::backend::ModelBackend> = Arc::new(FakeBackend::new());
     let runtime = Arc::new(WorkerRuntime::new(
         id.to_string(),
         "test-host".to_string(),
@@ -66,7 +66,7 @@ async fn spawn_worker(id: &str) -> String {
         backend_name: "fake".to_string(),
         hardware_cache: std::sync::Mutex::new(None),
     });
-    let app = lao_worker::server::router(state);
+    let app = pig_worker::server::router(state);
     let tokio_listener = tokio::net::TcpListener::from_std(std_listener).unwrap();
     tokio::spawn(async move {
         axum::serve(tokio_listener, app).await.ok();
@@ -217,11 +217,11 @@ async fn coordinator_server_health_reports_worker_counts() {
     let std_listener = StdTcpListener::bind("127.0.0.1:0").unwrap();
     std_listener.set_nonblocking(true).unwrap();
     let coord_addr = std_listener.local_addr().unwrap();
-    let state = Arc::new(lao_worker::coordinator_server::CoordinatorServerState::new(
+    let state = Arc::new(pig_worker::coordinator_server::CoordinatorServerState::new(
         coordinator,
         None,
     ));
-    let app = lao_worker::coordinator_server::router(state);
+    let app = pig_worker::coordinator_server::router(state);
     let listener = tokio::net::TcpListener::from_std(std_listener).unwrap();
     tokio::spawn(async move {
         axum::serve(listener, app).await.ok();
@@ -262,11 +262,11 @@ async fn coordinator_server_generate_routes_through_to_worker() {
     let std_listener = StdTcpListener::bind("127.0.0.1:0").unwrap();
     std_listener.set_nonblocking(true).unwrap();
     let coord_addr = std_listener.local_addr().unwrap();
-    let state = Arc::new(lao_worker::coordinator_server::CoordinatorServerState::new(
+    let state = Arc::new(pig_worker::coordinator_server::CoordinatorServerState::new(
         coordinator,
         None,
     ));
-    let app = lao_worker::coordinator_server::router(state);
+    let app = pig_worker::coordinator_server::router(state);
     let listener = tokio::net::TcpListener::from_std(std_listener).unwrap();
     tokio::spawn(async move {
         axum::serve(listener, app).await.ok();
@@ -282,7 +282,7 @@ async fn coordinator_server_generate_routes_through_to_worker() {
         .await
         .unwrap();
     assert!(resp.status().is_success());
-    let response: lao_orchestrator_core::model::ModelResponse = resp.json().await.unwrap();
+    let response: pig_core::model::ModelResponse = resp.json().await.unwrap();
     assert_eq!(response.status, ModelResponseStatus::Success);
     assert_eq!(response.execution.worker_id.0, "ws2");
 }

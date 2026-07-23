@@ -2,9 +2,9 @@
 //!
 //! `core` never talks to a network or spawns a model runtime itself — it only defines
 //! this trait. The concrete implementation (routing through the scheduler to an HTTP
-//! worker) lives in the separate `lao-worker` crate and is constructed by the CLI,
+//! worker) lives in the separate `pig-worker` crate and is constructed by the CLI,
 //! which passes it in when building a `StepExecutor`. This keeps `core` free of any
-//! async runtime or HTTP client dependency, and keeps model runtimes out of LAO's core
+//! async runtime or HTTP client dependency, and keeps model runtimes out of pig's core
 //! process (they run in a worker, a separate OS process, supervised over HTTP).
 
 use crate::model::types::{ModelRequest, ModelResponse};

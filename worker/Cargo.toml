@@ -1,13 +1,13 @@
 [package]
-name = "lao-worker"
+name = "pig-worker"
 version.workspace = true
-description = "Long-running LAO worker: HTTP protocol, job queue, and model backend supervision"
+description = "pig worker: HTTP API, job queue, and llama.cpp supervision"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [lib]
-name = "lao_worker"
+name = "pig_worker"
 path = "lib.rs"
 
 # Test-only fixture: a fake llama-server executable used by
@@ -20,7 +20,7 @@ test = false
 doc = false
 
 [dependencies]
-lao-orchestrator-core = { path = "../core" }
+pig-core = { path = "../core" }
 async-trait = "0.1"
 axum = { version = "0.7", features = ["json"] }
 futures = "0.3"

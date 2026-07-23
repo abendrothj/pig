@@ -16,7 +16,7 @@ use axum::{
     Json, Router,
 };
 use futures::StreamExt;
-use lao_orchestrator_core::model::{
+use pig_core::model::{
     FinishReason, GenerationParameters, MessageRole, ModelChunk, ModelInvoker, ModelMessage,
     ModelRequest, ModelResponseStatus, ModelRole, ModelSelector, ModelToolCall, ModelToolFunction,
     RequestId, RoutingExplanation, SchedulingOverrides, WorkerSnapshot,
@@ -216,12 +216,12 @@ fn normalize_openai_request(
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    let role = if let Some(alias) = request.model.strip_prefix("lao-") {
+    let role = if let Some(alias) = request.model.strip_prefix("pig-") {
         ModelRole::parse(alias)
     } else {
         ModelRole::Reasoning
     };
-    let model = if request.model.starts_with("lao-") {
+    let model = if request.model.starts_with("pig-") {
         None
     } else {
         Some(ModelSelector::Alias(request.model.clone()))
@@ -257,9 +257,9 @@ async fn openai_models(
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let ids = ["lao-coding", "lao-reasoning", "lao-verification"];
+    let ids = ["pig-coding", "pig-reasoning", "pig-verification"];
     Json(
-        serde_json::json!({"object":"list", "data": ids.into_iter().map(|id| serde_json::json!({"id":id,"object":"model","created":created,"owned_by":"lao"})).collect::<Vec<_>>() }),
+        serde_json::json!({"object":"list", "data": ids.into_iter().map(|id| serde_json::json!({"id":id,"object":"model","created":created,"owned_by":"pig"})).collect::<Vec<_>>() }),
     )
 }
 
@@ -312,7 +312,7 @@ async fn openai_chat_completions(
     match task::spawn_blocking(move || coordinator.invoke(request)).await {
         Ok(response) if response.status == ModelResponseStatus::Success => {
             let content = match response.output {
-                lao_orchestrator_core::artifact::Artifact::Text(text) => text,
+                pig_core::artifact::Artifact::Text(text) => text,
                 other => serde_json::to_string(&other).unwrap_or_default(),
             };
             let finish_reason = match response.finish_reason {
@@ -582,7 +582,7 @@ mod openai_tests {
     #[test]
     fn logical_coding_model_normalizes_to_a_coding_request() {
         let (_, request, stream) = normalize_openai_request(OpenAiChatRequest {
-            model: "lao-coding".to_string(),
+            model: "pig-coding".to_string(),
             messages: vec![OpenAiMessage {
                 role: "user".to_string(),
                 content: Some(serde_json::json!("fix the test")),
@@ -606,7 +606,7 @@ mod openai_tests {
     fn tool_definitions_are_preserved_for_the_backend() {
         let tool = serde_json::json!({"type":"function","function":{"name":"read_file","parameters":{"type":"object"}}});
         let (_, request, _) = normalize_openai_request(OpenAiChatRequest {
-            model: "lao-coding".to_string(),
+            model: "pig-coding".to_string(),
             messages: vec![OpenAiMessage {
                 role: "user".to_string(),
                 content: Some(serde_json::json!("inspect")),
@@ -631,7 +631,7 @@ mod openai_tests {
     #[test]
     fn assistant_tool_calls_and_tool_results_preserve_order_and_ids() {
         let (_, request, _) = normalize_openai_request(OpenAiChatRequest {
-            model: "lao-coding".to_string(),
+            model: "pig-coding".to_string(),
             messages: vec![
                 OpenAiMessage {
                     role: "system".to_string(),
@@ -711,7 +711,7 @@ mod openai_tests {
     #[test]
     fn non_function_tool_calls_are_rejected_during_normalization() {
         let error = normalize_openai_request(OpenAiChatRequest {
-            model: "lao-coding".to_string(),
+            model: "pig-coding".to_string(),
             messages: vec![OpenAiMessage {
                 role: "assistant".to_string(),
                 content: None,
@@ -748,7 +748,7 @@ mod openai_tests {
     fn openai_stream_payload_keeps_tool_call_deltas_structured() {
         let payload = openai_sse_payload(
             "chatcmpl-test",
-            "lao-coding",
+            "pig-coding",
             123,
             serde_json::json!({"tool_calls":[{
                 "index": 1,

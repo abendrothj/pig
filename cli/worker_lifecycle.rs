@@ -1,4 +1,4 @@
-//! `lao-cli worker install/uninstall/start/stop/restart/status/logs` — turns the
+//! `pig worker install/uninstall/start/stop/restart/status/logs` — turns the
 //! worker from a manually launched process into a systemd-managed appliance: a
 //! dedicated non-root service account, protected config/token files, auto-start after
 //! boot/network/Tailscale, auto-restart on crash. Linux-only (systemd); every entry
@@ -9,24 +9,24 @@
 //! referenced files' home directory, rather than moving files or loosening broader
 //! permissions — see the plan this was built from for the reasoning.
 
-use lao_orchestrator_core::cross_platform::Platform;
-use lao_orchestrator_core::model::ModelRegistry;
-use lao_worker::config::WorkerConfig;
+use pig_core::cross_platform::Platform;
+use pig_core::model::ModelRegistry;
+use pig_worker::config::WorkerConfig;
 use std::collections::BTreeSet;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Command;
 
-const SERVICE_ACCOUNT: &str = "lao-worker";
-const SERVICE_HOME: &str = "/var/lib/lao-worker";
-const SERVICE_NAME: &str = "lao-worker.service";
-const SYSUSERS_CONF_PATH: &str = "/etc/sysusers.d/lao-worker.conf";
-const BIN_DIR: &str = "/opt/lao-worker/bin";
-const BIN_PATH: &str = "/opt/lao-worker/bin/lao-cli";
-const ETC_DIR: &str = "/etc/lao-worker";
-const CONFIG_DEST: &str = "/etc/lao-worker/lao.toml";
-const ENV_FILE_PATH: &str = "/etc/lao-worker/worker.env";
-const UNIT_PATH: &str = "/etc/systemd/system/lao-worker.service";
+const SERVICE_ACCOUNT: &str = "pig-worker";
+const SERVICE_HOME: &str = "/var/lib/pig-worker";
+const SERVICE_NAME: &str = "pig-worker.service";
+const SYSUSERS_CONF_PATH: &str = "/etc/sysusers.d/pig-worker.conf";
+const BIN_DIR: &str = "/opt/pig-worker/bin";
+const BIN_PATH: &str = "/opt/pig-worker/bin/pig";
+const ETC_DIR: &str = "/etc/pig-worker";
+const CONFIG_DEST: &str = "/etc/pig-worker/pig.toml";
+const ENV_FILE_PATH: &str = "/etc/pig-worker/worker.env";
+const UNIT_PATH: &str = "/etc/systemd/system/pig-worker.service";
 
 fn fail(message: &str) -> ! {
     eprintln!("[ERROR] {}", message);
@@ -184,7 +184,7 @@ fn home_dirs_from_config_text(text: &str) -> BTreeSet<PathBuf> {
 /// Reads the bearer token out of the installed `worker.env` (`VAR=value`, written by
 /// `install`) so `status`'s own health probe can authenticate against a worker that
 /// requires it, the same way every other worker-facing health check in this project
-/// already does. Only ever readable by root or the `lao-worker` group in practice
+/// already does. Only ever readable by root or the `pig-worker` group in practice
 /// (file mode `600`), so this silently yields nothing for an unprivileged caller
 /// rather than erroring — matching how the config read above already behaves.
 fn read_worker_token() -> Option<String> {
@@ -198,7 +198,7 @@ pub fn worker_install(config: Option<String>) {
     require_linux();
     require_root();
 
-    let config_path = config.unwrap_or_else(|| "lao.toml".to_string());
+    let config_path = config.unwrap_or_else(|| "pig.toml".to_string());
     let config_text = std::fs::read_to_string(&config_path)
         .unwrap_or_else(|e| fail(&format!("reading {}: {}", config_path, e)));
     let worker_config =
@@ -210,8 +210,8 @@ pub fn worker_install(config: Option<String>) {
     // the most likely reason this fails even when the operator "already set it".
     let token_value = worker_config.resolve_auth_token().unwrap_or_else(|e| {
         fail(&format!(
-            "{}. Since this command must run as root, re-run as `sudo -E lao-cli worker install ...` \
-             or `sudo <VAR>=<token> lao-cli worker install ...` so the variable is visible to root.",
+            "{}. Since this command must run as root, re-run as `sudo -E pig worker install ...` \
+             or `sudo <VAR>=<token> pig worker install ...` so the variable is visible to root.",
             e
         ))
     });
@@ -306,7 +306,7 @@ pub fn worker_install(config: Option<String>) {
         println!("Installed and started {}.", SERVICE_NAME);
     } else {
         println!(
-            "Installed {} (already running — use `lao-cli worker restart` to pick up changes).",
+            "Installed {} (already running — use `pig worker restart` to pick up changes).",
             SERVICE_NAME
         );
     }
@@ -344,7 +344,7 @@ pub fn worker_uninstall(purge_user: bool) {
             }
         }
     }
-    for dir in [ETC_DIR, "/opt/lao-worker"] {
+    for dir in [ETC_DIR, "/opt/pig-worker"] {
         if let Err(e) = std::fs::remove_dir_all(dir) {
             if e.kind() != std::io::ErrorKind::NotFound {
                 eprintln!("[WARN] removing {}: {}", dir, e);
@@ -503,7 +503,7 @@ mod tests {
         let conf = generate_sysusers_conf();
         assert_eq!(
             conf,
-            "u lao-worker - \"LAO worker service account\" /var/lib/lao-worker /usr/sbin/nologin\n"
+            "u pig-worker - \"LAO worker service account\" /var/lib/pig-worker /usr/sbin/nologin\n"
         );
     }
 
@@ -521,7 +521,7 @@ mod tests {
 
     #[test]
     fn home_dir_detection_ignores_paths_outside_home() {
-        let paths = vec![PathBuf::from("/opt/lao-worker/models/model.gguf")];
+        let paths = vec![PathBuf::from("/opt/pig-worker/models/model.gguf")];
         let dirs = home_dirs_needing_acl(&paths, "llama-server");
         assert!(
             dirs.is_empty(),

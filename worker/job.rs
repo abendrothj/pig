@@ -5,8 +5,8 @@
 //! TimedOut}`. A job never regresses out of a terminal state.
 
 use crate::backend::{BackendError, BackendGenerationRequest, LoadModelRequest, ModelBackend};
-use lao_orchestrator_core::artifact::Artifact;
-use lao_orchestrator_core::model::{
+use pig_core::artifact::Artifact;
+use pig_core::model::{
     CancellationInfo, CancellationReason, FinishReason, JobId, ModelChunk, ModelExecutionError,
     ModelExecutionMetadata, ModelId, ModelRequest, ModelResponse, ModelResponseStatus, ModelUsage,
     RequestId, ResolvedModel,
@@ -71,7 +71,7 @@ pub enum QueueError {
 /// "what's loaded" answer and live hardware readings for the full schema.
 #[derive(Debug, Clone, Default)]
 pub struct JobMetricsSnapshot {
-    pub counts: lao_orchestrator_core::model::JobMetrics,
+    pub counts: pig_core::model::JobMetrics,
     pub currently_loading: bool,
     pub last_load_duration_ms: Option<u64>,
     pub last_prompt_tokens_per_second: Option<f64>,
@@ -164,7 +164,7 @@ impl WorkerRuntime {
     /// second counter that could drift from what `jobs` actually contains.
     pub async fn job_metrics(&self) -> JobMetricsSnapshot {
         let jobs = self.jobs.read().await;
-        let mut counts = lao_orchestrator_core::model::JobMetrics::default();
+        let mut counts = pig_core::model::JobMetrics::default();
         let mut currently_loading = false;
         let mut latest_success_completed_at = 0u64;
         let mut last_prompt_tokens_per_second = None;
@@ -550,7 +550,7 @@ async fn run_job(
                 total_tokens: generation.prompt_tokens + generation.completion_tokens,
             };
             let output = match request.parameters.response_format {
-                Some(lao_orchestrator_core::model::ResponseFormat::Json) => {
+                Some(pig_core::model::ResponseFormat::Json) => {
                     serde_json::from_str::<serde_json::Value>(&generation.content)
                         .map(Artifact::Json)
                         .unwrap_or_else(|_| Artifact::Text(generation.content.clone()))
@@ -587,7 +587,7 @@ async fn run_job(
 mod tests {
     use super::*;
     use crate::backend::fake::FakeBackend;
-    use lao_orchestrator_core::model::{GenerationParameters, ModelMessage, ModelRole};
+    use pig_core::model::{GenerationParameters, ModelMessage, ModelRole};
 
     fn runtime(max_concurrent: usize, max_queued: usize) -> WorkerRuntime {
         WorkerRuntime::new(

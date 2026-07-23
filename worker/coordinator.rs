@@ -7,7 +7,7 @@
 
 use crate::defer_drop::DeferDrop;
 use futures::{Stream, StreamExt};
-use lao_orchestrator_core::model::{
+use pig_core::model::{
     latest_matching_benchmark, schedule, BenchmarkFingerprint, BenchmarkSummary, FinishReason,
     ModelChunk, ModelExecutionError, ModelExecutionMetadata, ModelId, ModelInvoker, ModelRegistry,
     ModelRequest, ModelResponse, ModelResponseStatus, ModelRole, ModelUsage, ReasoningMode,
@@ -185,7 +185,7 @@ impl Coordinator {
             .get("version")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let accelerators: Vec<lao_orchestrator_core::model::AcceleratorKind> = backend_obj
+        let accelerators: Vec<pig_core::model::AcceleratorKind> = backend_obj
             .get("accelerators")
             .and_then(|v| v.as_array())
             .map(|arr| {
@@ -222,7 +222,7 @@ impl Coordinator {
         // cli::model_commands::models_benchmark), from data the worker itself reports
         // rather than a new hardware-probing mechanism.
         let hardware_fp = caps.get("hardware").map(|hw| {
-            lao_orchestrator_core::model::worker_hardware_fingerprint(
+            pig_core::model::worker_hardware_fingerprint(
                 hw.get("os").and_then(|v| v.as_str()).unwrap_or("unknown"),
                 hw.get("arch").and_then(|v| v.as_str()).unwrap_or("unknown"),
                 hw.get("hostname")
@@ -372,7 +372,7 @@ impl Coordinator {
             .get("version")
             .and_then(|value| value.as_str())
             .map(str::to_string);
-        let accelerators: Vec<lao_orchestrator_core::model::AcceleratorKind> = backend_obj
+        let accelerators: Vec<pig_core::model::AcceleratorKind> = backend_obj
             .get("accelerators")
             .and_then(|value| value.as_array())
             .map(|values| {
@@ -395,7 +395,7 @@ impl Coordinator {
             })
             .unwrap_or_default();
         let hardware_fp = caps.get("hardware").map(|hardware| {
-            lao_orchestrator_core::model::worker_hardware_fingerprint(
+            pig_core::model::worker_hardware_fingerprint(
                 hardware
                     .get("os")
                     .and_then(|value| value.as_str())
@@ -598,12 +598,12 @@ impl Coordinator {
     }
 
     /// Fetches one worker's current metrics snapshot on demand. Purely an
-    /// observability read, not part of routing - `lao-cli workers metrics` is the
+    /// observability read, not part of routing - `pig workers metrics` is the
     /// only caller today.
     pub fn worker_metrics(
         &self,
         worker_id: &str,
-    ) -> Result<lao_orchestrator_core::model::WorkerMetricsSnapshot, String> {
+    ) -> Result<pig_core::model::WorkerMetricsSnapshot, String> {
         let worker = self
             .workers
             .iter()
@@ -618,7 +618,7 @@ impl Coordinator {
             return Err(format!("worker returned {}", response.status()));
         }
         response
-            .json::<lao_orchestrator_core::model::WorkerMetricsSnapshot>()
+            .json::<pig_core::model::WorkerMetricsSnapshot>()
             .map_err(|e| e.to_string())
     }
 
@@ -730,8 +730,8 @@ impl ModelInvoker for Coordinator {
     }
 }
 
-fn parse_accelerator(s: &str) -> Option<lao_orchestrator_core::model::AcceleratorKind> {
-    use lao_orchestrator_core::model::AcceleratorKind::*;
+fn parse_accelerator(s: &str) -> Option<pig_core::model::AcceleratorKind> {
+    use pig_core::model::AcceleratorKind::*;
     match s {
         "cuda" => Some(Cuda),
         "metal" => Some(Metal),
@@ -746,9 +746,9 @@ fn failure_response(request: &ModelRequest, error: ModelExecutionError) -> Model
     ModelResponse {
         request_id: request.request_id.clone(),
         status: ModelResponseStatus::Failed,
-        output: lao_orchestrator_core::artifact::Artifact::Null,
+        output: pig_core::artifact::Artifact::Null,
         finish_reason: FinishReason::Error,
-        model: lao_orchestrator_core::model::ResolvedModel {
+        model: pig_core::model::ResolvedModel {
             model_id: ModelId::from("unresolved"),
             role: Some(request.role.clone()),
             backend: "none".to_string(),
@@ -854,10 +854,10 @@ auth_token_env = "LAO_LINUX_WORKER_TOKEN"
             registry,
         );
         let request = ModelRequest {
-            request_id: lao_orchestrator_core::model::RequestId::generate(),
-            role: lao_orchestrator_core::model::ModelRole::Reasoning,
+            request_id: pig_core::model::RequestId::generate(),
+            role: pig_core::model::ModelRole::Reasoning,
             model: None,
-            messages: vec![lao_orchestrator_core::model::ModelMessage::user("hi")],
+            messages: vec![pig_core::model::ModelMessage::user("hi")],
             parameters: Default::default(),
             requirements: Default::default(),
             inputs: vec![],
@@ -876,7 +876,7 @@ auth_token_env = "LAO_LINUX_WORKER_TOKEN"
         tools: Vec<serde_json::Value>,
         mode: ReasoningMode,
     ) -> ModelRequest {
-        use lao_orchestrator_core::model::{
+        use pig_core::model::{
             GenerationParameters, ModelMessage, ModelRequirements, RequestId,
         };
         ModelRequest {

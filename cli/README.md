@@ -5,14 +5,14 @@ This is the dedicated command-line interface for the LAO Orchestrator.
 ## Usage
 
 ```
-cargo run --bin lao-cli run workflows/test.yaml
-cargo run --bin lao-cli validate workflows/test.yaml
-cargo run --bin lao-cli plugin-list
-cargo run --bin lao-cli new-workflow myflow --output workflows/myflow.yaml
-cargo run --bin lao-cli prompt "Summarize this audio" --output workflows/audio_summary.yaml
-cargo run --bin lao-cli list-workflows
-cargo run --bin lao-cli view-workflow myflow
-cargo run --bin lao-cli delete-workflow myflow
+cargo run --bin pig run workflows/test.yaml
+cargo run --bin pig validate workflows/test.yaml
+cargo run --bin pig plugin-list
+cargo run --bin pig new-workflow myflow --output workflows/myflow.yaml
+cargo run --bin pig prompt "Summarize this audio" --output workflows/audio_summary.yaml
+cargo run --bin pig list-workflows
+cargo run --bin pig view-workflow myflow
+cargo run --bin pig delete-workflow myflow
 ```
 
 ## Commands

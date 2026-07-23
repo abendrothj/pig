@@ -6,10 +6,10 @@ mod worker_lifecycle;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "lao")]
+#[command(name = "pig")]
 #[command(about = "Local AI Orchestrator CLI", long_about = None)]
 struct Cli {
-    /// Coordinator profile from [profiles.<name>] in lao.toml. Omit to preserve
+    /// Coordinator profile from [profiles.<name>] in pig.toml. Omit to preserve
     /// the existing embedded coordinator behavior.
     #[arg(long, global = true)]
     profile: Option<String>,
@@ -55,17 +55,17 @@ enum Commands {
 enum WorkerAction {
     /// Start the worker daemon (blocks until shutdown)
     Serve {
-        #[arg(long, help = "Path to lao.toml (default: ./lao.toml)")]
+        #[arg(long, help = "Path to pig.toml (default: ./pig.toml)")]
         config: Option<String>,
     },
     /// Install the worker as a systemd service (Linux only, requires root)
     Install {
-        #[arg(long, help = "Path to lao.toml (default: ./lao.toml)")]
+        #[arg(long, help = "Path to pig.toml (default: ./pig.toml)")]
         config: Option<String>,
     },
     /// Remove the systemd service, its config/token files, and the ACL grant
     Uninstall {
-        #[arg(long, help = "Also remove the dedicated lao-worker service account")]
+        #[arg(long, help = "Also remove the dedicated pig-worker service account")]
         purge_user: bool,
     },
     /// Start the installed systemd service
@@ -217,7 +217,7 @@ enum JobsAction {
 enum CoordinatorAction {
     /// Start the coordinator as a persistent HTTP service (homelab mode)
     Serve {
-        #[arg(long, help = "Path to lao.toml (default: ./lao.toml)")]
+        #[arg(long, help = "Path to pig.toml (default: ./pig.toml)")]
         config: Option<String>,
         #[arg(long, default_value = "0.0.0.0:3001", help = "Address to bind to")]
         bind: Option<String>,

@@ -1,18 +1,18 @@
-//! Handlers for `lao coordinator` — run the coordinator as a persistent HTTP service.
-//! Reads the same lao.toml that the rest of the CLI uses.
+//! Handlers for `pig coordinator` — run the coordinator as a persistent HTTP service.
+//! Reads the same pig.toml that the rest of the CLI uses.
 
-use lao_orchestrator_core::model::ModelRegistry;
-use lao_worker::coordinator::{Coordinator, WorkersConfig};
-use lao_worker::coordinator_server::CoordinatorServerState;
+use pig_core::model::ModelRegistry;
+use pig_worker::coordinator::{Coordinator, WorkersConfig};
+use pig_worker::coordinator_server::CoordinatorServerState;
 use std::sync::Arc;
 
 fn config_text(config: Option<&str>) -> String {
     let candidates: Vec<&str> = if let Some(p) = config {
         vec![p]
-    } else if let Ok(p) = std::env::var("LAO_CONFIG") {
+    } else if let Ok(p) = std::env::var("PIG_CONFIG") {
         return std::fs::read_to_string(p).unwrap_or_default();
     } else {
-        vec!["lao.toml", "config/lao.toml"]
+        vec!["pig.toml", "config/pig.toml"]
     };
     candidates
         .iter()
@@ -31,7 +31,7 @@ pub fn coordinator_serve(
         .map(|c| c.workers)
         .unwrap_or_default();
     if workers.is_empty() {
-        eprintln!("[ERROR] no [[workers]] configured in lao.toml (or LAO_CONFIG)");
+        eprintln!("[ERROR] no [[workers]] configured in pig.toml (or PIG_CONFIG)");
         std::process::exit(1);
     }
 
@@ -55,7 +55,7 @@ pub fn coordinator_serve(
     println!("Starting coordinator on {}", bind_addr);
     let rt = tokio::runtime::Runtime::new().expect("failed to build tokio runtime");
     rt.block_on(async move {
-        if let Err(e) = lao_worker::coordinator_server::serve(state, &bind_addr).await {
+        if let Err(e) = pig_worker::coordinator_server::serve(state, &bind_addr).await {
             eprintln!("[ERROR] coordinator server failed: {}", e);
             std::process::exit(1);
         }

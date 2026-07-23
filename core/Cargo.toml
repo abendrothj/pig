@@ -1,13 +1,13 @@
 [package]
-name = "lao-orchestrator-core"
+name = "pig-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Core types and code intelligence for LAO"
+description = "Core types for pig — Private Inference Gateway"
 authors.workspace = true
 
 [lib]
-name = "lao_orchestrator_core"
+name = "pig_core"
 path = "lib.rs"
 
 

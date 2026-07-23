@@ -1,21 +1,21 @@
-# lao Architecture
+# pig Architecture
 
 ## Overview
 
-lao is an inference coordinator for local llama.cpp workers. It routes generation requests to the right worker based on hardware constraints, exposes an OpenAI-compatible gateway, and manages worker lifecycle via systemd.
+pig is an inference coordinator for local llama.cpp workers. It routes generation requests to the right worker based on hardware constraints, exposes an OpenAI-compatible gateway, and manages worker lifecycle via systemd.
 
 ## Components
 
-- **Worker** (`lao-worker`): Supervises a `llama-server` subprocess, exposes a JSON HTTP API, manages a bounded job queue, and reports hardware capabilities and telemetry.
+- **Worker** (`pig-worker`): Supervises a `llama-server` subprocess, exposes a JSON HTTP API, manages a bounded job queue, and reports hardware capabilities and telemetry.
 - **Coordinator** (`worker::coordinator`): Schedules requests across configured workers using constraint-based selection. Implemented as a synchronous `ModelInvoker` over `reqwest::blocking` — no async runtime required at the call site.
 - **Coordinator server** (`worker::coordinator_server`): Persistent HTTP service exposing an OpenAI-compatible gateway (`POST /v1/chat/completions`, `GET /v1/models`) and a control plane API.
-- **Core** (`lao-orchestrator-core`): Shared types — `ModelRequest`, `ModelResponse`, `ModelRole`, `ReasoningMode`, `PlacementPolicy`, `Artifact`, scheduler logic, model registry.
-- **CLI** (`lao-cli`): Manages workers, models, routes, jobs, and coordinator lifecycle.
+- **Core** (`pig-core`): Shared types — `ModelRequest`, `ModelResponse`, `ModelRole`, `ReasoningMode`, `PlacementPolicy`, `Artifact`, scheduler logic, model registry.
+- **CLI** (`pig`): Manages workers, models, routes, jobs, and coordinator lifecycle.
 
 ## Request flow
 
 ```
-lao-cli / OpenAI client
+pig / OpenAI client
         |
         v
 Coordinator (scheduler)
@@ -45,6 +45,6 @@ Two layers:
 
 ## Worker isolation
 
-Each worker is an independent OS process running its own `llama-server`. lao does not split model layers across machines — it routes different jobs to different workers. Multiple workers on the same machine use different ports.
+Each worker is an independent OS process running its own `llama-server`. pig does not split model layers across machines — it routes different jobs to different workers. Multiple workers on the same machine use different ports.
 
-Workers can be run directly via `lao worker serve` or installed as a systemd service via `lao worker install`.
+Workers can be run directly via `pig worker serve` or installed as a systemd service via `pig worker install`.

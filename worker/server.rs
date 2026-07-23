@@ -19,7 +19,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures::StreamExt;
-use lao_orchestrator_core::model::{
+use pig_core::model::{
     AcceleratorMetrics, JobId, ModelId, ModelLoadState, ModelMetrics, ModelRequest, ModelSelector,
     QueueMetrics, SystemMetrics, ThroughputMetrics, WorkerId, WorkerIdentityMetrics,
     WorkerLifecycleState, WorkerMetricsSnapshot, METRICS_SCHEMA_VERSION,
@@ -274,7 +274,7 @@ async fn metrics(State(state): State<Arc<AppState>>) -> Json<WorkerMetricsSnapsh
 
 async fn list_models(
     State(state): State<Arc<AppState>>,
-) -> Json<Vec<lao_orchestrator_core::model::ResolvedModelEntry>> {
+) -> Json<Vec<pig_core::model::ResolvedModelEntry>> {
     Json(state.registry.all_resolved())
 }
 

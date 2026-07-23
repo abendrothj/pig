@@ -9,7 +9,7 @@ pub mod fake;
 pub mod llama_cpp;
 
 use async_trait::async_trait;
-use lao_orchestrator_core::model::{
+use pig_core::model::{
     AcceleratorKind, FinishReason, GenerationParameters, ModelChunk, ModelId, ModelMessage,
     ModelToolCall, RequestId,
 };

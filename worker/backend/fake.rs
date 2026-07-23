@@ -8,7 +8,7 @@ use super::{
     ModelEventSender,
 };
 use async_trait::async_trait;
-use lao_orchestrator_core::model::{
+use pig_core::model::{
     AcceleratorKind, FinishReason, MessageRole, ModelChunk, ModelId,
 };
 use std::collections::HashMap;
@@ -190,7 +190,7 @@ impl ModelBackend for FakeBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lao_orchestrator_core::model::{GenerationParameters, ModelMessage, RequestId};
+    use pig_core::model::{GenerationParameters, ModelMessage, RequestId};
 
     fn request(model: &str, prompt: &str, max_tokens: u32) -> BackendGenerationRequest {
         BackendGenerationRequest {

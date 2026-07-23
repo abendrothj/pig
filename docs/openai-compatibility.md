@@ -20,8 +20,8 @@ system, or authentication layer.
 OpenAI client → coordinator gateway → ModelRequest → scheduler → worker → ModelResponse
 ```
 
-`/v1/models` publishes stable logical policies (`lao-coding`,
-`lao-reasoning`, and `lao-verification`). Physical model identifiers are
+`/v1/models` publishes stable logical policies (`pig-coding`,
+`pig-reasoning`, and `pig-verification`). Physical model identifiers are
 operator-facing information and are not part of the client contract.
 
 ## Tool calls and streaming

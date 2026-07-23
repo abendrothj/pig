@@ -6,10 +6,10 @@
 //! itself uses - readiness-delay, excessive-stderr, and graceful-shutdown-under-load
 //! are not separately covered here; see the final report for the full list.
 
-use lao_orchestrator_core::model::ModelId;
-use lao_orchestrator_core::model::{GenerationParameters, ModelMessage, RequestId};
-use lao_worker::backend::llama_cpp::{LlamaCppBackend, LlamaCppConfig};
-use lao_worker::backend::{BackendError, BackendGenerationRequest, LoadModelRequest, ModelBackend};
+use pig_core::model::ModelId;
+use pig_core::model::{GenerationParameters, ModelMessage, RequestId};
+use pig_worker::backend::llama_cpp::{LlamaCppBackend, LlamaCppConfig};
+use pig_worker::backend::{BackendError, BackendGenerationRequest, LoadModelRequest, ModelBackend};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -82,7 +82,7 @@ async fn successful_startup_and_generation_captures_content_and_reasoning() {
     let mut tokens = Vec::new();
     while let Some(event) = rx.recv().await {
         match event {
-            lao_orchestrator_core::model::ModelChunk::TextDelta { text } => tokens.push(text),
+            pig_core::model::ModelChunk::TextDelta { text } => tokens.push(text),
             _ => {}
         }
     }

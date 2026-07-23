@@ -16,7 +16,7 @@ use super::{
 };
 use async_trait::async_trait;
 use futures::StreamExt;
-use lao_orchestrator_core::model::{
+use pig_core::model::{
     AcceleratorKind, FinishReason, MessageRole, ModelChunk, ModelId, ModelToolCall,
     ModelToolFunction, ReasoningMode,
 };
@@ -283,7 +283,7 @@ fn apply_reasoning_mode(messages: &mut Vec<serde_json::Value>, mode: ReasoningMo
 }
 
 fn openai_messages(
-    messages: &[lao_orchestrator_core::model::ModelMessage],
+    messages: &[pig_core::model::ModelMessage],
 ) -> Vec<serde_json::Value> {
     messages
         .iter()
@@ -784,7 +784,7 @@ fn finish_tool_call_fragments(fragments: BTreeMap<usize, ToolCallFragments>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lao_orchestrator_core::model::{ModelMessage, ModelToolCall, ModelToolFunction};
+    use pig_core::model::{ModelMessage, ModelToolCall, ModelToolFunction};
 
     #[test]
     fn execution_config_round_trips_through_json() {

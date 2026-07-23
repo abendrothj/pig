@@ -30,8 +30,8 @@ plugins/*.dll
 .env
 .env.*
 !.env.example
-lao.toml
-!lao.toml.example
+pig.toml
+!pig.toml.example
 
 # Editor
 .vscode/
@@ -50,4 +50,4 @@ cache/
 workflow_states/
 plugins_runtime/
 .whisper_cpp_path
-.lao_benchmarks/
+.pig_benchmarks/

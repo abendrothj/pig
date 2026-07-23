@@ -1,4 +1,4 @@
-# lao — Local Model Inference
+# pig — Local Model Inference
 
 LAO can run local language models through a supervised `llama-server` (llama.cpp)
 process, route requests across one or more registered workers based on hardware and
@@ -9,13 +9,13 @@ source modules (`core/model/`, `worker/`).
 ## Architecture
 
 ```
-lao-cli / OpenAI client
+pig / OpenAI client
         |
         v
 Coordinator (scheduler + HTTP client)
         |
         v
-Worker (separate process, `lao worker serve`)
+Worker (separate process, `pig worker serve`)
         |
         v
 ModelBackend (llama_cpp)
@@ -27,7 +27,7 @@ llama-server subprocess
 ModelResponse (structured: output artifact + full execution metadata)
 ```
 
-A worker is always a separate OS process from the CLI or coordinator. `core` defines `ModelInvoker`, a synchronous trait implemented by `worker::coordinator::Coordinator` using `reqwest::blocking` — calling it never requires a nested tokio runtime. All async complexity lives in `lao-worker`.
+A worker is always a separate OS process from the CLI or coordinator. `core` defines `ModelInvoker`, a synchronous trait implemented by `worker::coordinator::Coordinator` using `reqwest::blocking` — calling it never requires a nested tokio runtime. All async complexity lives in `pig-worker`.
 
 **LAO does not split one model across multiple machines.** Each worker runs its own
 independent `llama-server`. Scaling across machines means routing *different* jobs to
@@ -55,11 +55,11 @@ there's nothing to configure for this.
 ## Adding a GGUF model
 
 ```bash
-lao-cli models discover --directory ~/models
+pig models discover --directory ~/models
 ```
 
 This only scans and prints — it never writes configuration for you. Add the model to
-`lao.toml` yourself:
+`pig.toml` yourself:
 
 ```toml
 [models.entries."qwen3-0.6b"]
@@ -119,19 +119,19 @@ candidates = ["qwen3-0.6b"]
 ```
 
 ```bash
-lao-cli worker serve --config lao.toml
+pig worker serve --config pig.toml
 ```
 
 The worker starts immediately (health becomes `ok` as soon as the `llama-server`
 executable itself is confirmed runnable) — no model is loaded until the first request
-or an explicit `lao-cli models load`. Stop it with Ctrl-C or `SIGTERM`; it waits up to
+or an explicit `pig models load`. Stop it with Ctrl-C or `SIGTERM`; it waits up to
 `shutdown_grace_seconds` for in-flight jobs to finish, then exits, and the supervised
 `llama-server` child is always terminated on exit (`kill_on_drop`), never orphaned.
 
 ## Connecting two machines
 
-On the coordinator side (wherever you run `lao-cli` or workflows from), add the second
-machine to the same `lao.toml`:
+On the coordinator side (wherever you run `pig` or workflows from), add the second
+machine to the same `pig.toml`:
 
 ```toml
 [[workers]]
@@ -158,7 +158,7 @@ token_env = "LAO_LINUX_WORKER_TOKEN"
 
 ```bash
 export LAO_LINUX_WORKER_TOKEN=$(openssl rand -hex 32)
-lao-cli worker serve --config lao.toml
+pig worker serve --config pig.toml
 ```
 
 The coordinator polls each configured worker's `/v1/health` and `/v1/capabilities`
@@ -193,27 +193,27 @@ transformer layers across machines.
 ## CLI reference
 
 ```bash
-lao-cli worker serve [--config lao.toml]
+pig worker serve [--config pig.toml]
 
-lao-cli workers list [--json]
-lao-cli workers inspect <worker-id> [--json]
-lao-cli workers health [--json]          # non-zero exit if any worker is unhealthy
+pig workers list [--json]
+pig workers inspect <worker-id> [--json]
+pig workers health [--json]          # non-zero exit if any worker is unhealthy
 
-lao-cli models list [--json]
-lao-cli models inspect <model-id> [--json]
-lao-cli models discover --directory <path>
-lao-cli models load <model-id> [--worker <id>]
-lao-cli models unload <model-id> [--worker <id>]
-lao-cli models generate --prompt "..." [--role reasoning | --model <id>] \
+pig models list [--json]
+pig models inspect <model-id> [--json]
+pig models discover --directory <path>
+pig models load <model-id> [--worker <id>]
+pig models unload <model-id> [--worker <id>]
+pig models generate --prompt "..." [--role reasoning | --model <id>] \
     [--system "..."] [--max-tokens N] [--temperature F] \
     [--stream] [--json] [--force-worker <id>] [--force-cpu]
-lao-cli models benchmark <model-id> [--worker <id>] [--json]
+pig models benchmark <model-id> [--worker <id>] [--json]
 
-lao-cli route explain [--role reasoning | --model <id>] [--json]
+pig route explain [--role reasoning | --model <id>] [--json]
 
-lao-cli jobs list --worker <id> [--json]
-lao-cli jobs inspect <job-id> --worker <id> [--json]
-lao-cli jobs cancel <job-id> --worker <id>
+pig jobs list --worker <id> [--json]
+pig jobs inspect <job-id> --worker <id> [--json]
+pig jobs cancel <job-id> --worker <id>
 ```
 
 `--stream` prints tokens as they arrive (interactive use); without it, `models
@@ -226,26 +226,26 @@ worker is unhealthy.
 
 ```bash
 # 1. Configure (see "Running one local worker" above) and start the worker
-lao-cli worker serve --config lao.toml &
+pig worker serve --config pig.toml &
 
 # 2. Confirm it's up
-lao-cli workers health
+pig workers health
 
 # 3. Direct generation
-lao-cli models generate --role reasoning --prompt "Say hello in one word."
+pig models generate --role reasoning --prompt "Say hello in one word."
 
 # 4. See why a request would route where it does
-lao-cli route explain --role reasoning
+pig route explain --role reasoning
 
 # 5. Benchmark the model
-lao-cli models benchmark qwen3-0.6b
+pig models benchmark qwen3-0.6b
 ```
 
 ## Benchmarking
 
-`lao-cli models benchmark <model-id>` runs a short fixed prompt and records the result
+`pig models benchmark <model-id>` runs a short fixed prompt and records the result
 (load time, prompt/generation tokens-per-second, total latency, worker, backend,
-timestamp) as a JSON line under `.lao_benchmarks/<model-id>.jsonl` (gitignored — this is
+timestamp) as a JSON line under `.pig_benchmarks/<model-id>.jsonl` (gitignored — this is
 local runtime state, not something to commit). Records aren't currently pruned or
 deduplicated by model file hash/backend version — treat older entries in that file as
 historical, not automatically-invalidated, and compare timestamps yourself when a model
@@ -255,7 +255,7 @@ file, backend, or worker hardware changes.
 
 - A job's lifecycle is `Queued -> Loading -> Running -> {Succeeded, Failed, Cancelled,
   TimedOut}`.
-- `lao-cli jobs cancel <job-id> --worker <id>` (or `POST /v1/jobs/{id}/cancel`)
+- `pig jobs cancel <job-id> --worker <id>` (or `POST /v1/jobs/{id}/cancel`)
   cooperatively cancels a queued or running job via a `CancellationToken`; the
   `llama-server` HTTP connection is dropped, which stops it from producing further
   output for that request.
@@ -268,13 +268,13 @@ file, backend, or worker hardware changes.
 
 ## Troubleshooting
 
-- **"no [[workers]] configured"** — `lao-cli models generate`/`route explain`/`jobs *`
-  all require at least one `[[workers]]` entry in the resolved `lao.toml`.
+- **"no [[workers]] configured"** — `pig models generate`/`route explain`/`jobs *`
+  all require at least one `[[workers]]` entry in the resolved `pig.toml`.
 - **`route explain` says "no candidate model for the requested role"** — check
   `[models.roles.<role>]` lists at least one candidate, and that candidate has a
   matching `[models.entries.<id>]` (remember to quote IDs containing a period).
 - **`route explain` says "model 'X' is not known to this worker"** — the *worker's own*
-  copy of `lao.toml` needs the same `[models.entries.*]`; workers don't hot-reload
+  copy of `pig.toml` needs the same `[models.entries.*]`; workers don't hot-reload
   config, so restart the worker after editing it.
 - **A "thinking" model (e.g. Qwen3) returns empty output at a low `max_tokens`** — the
   model spent its whole budget on chain-of-thought before reaching a final answer;

@@ -1,15 +1,15 @@
 [package]
-name = "lao-cli"
+name = "pig"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Command-line interface for LAO - Local AI Orchestrator"
+description = "pig CLI — Private Inference Gateway"
 authors.workspace = true
 
 [dependencies]
 clap = { version = "4.0", features = ["derive"] }
-lao-orchestrator-core = { path = "../core" }
-lao-worker = { path = "../worker" }
+pig-core = { path = "../core" }
+pig-worker = { path = "../worker" }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -18,5 +18,5 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 
 [[bin]]
-name = "lao-cli"
+name = "pig"
 path = "main.rs"

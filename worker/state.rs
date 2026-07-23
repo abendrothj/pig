@@ -1,7 +1,7 @@
 use crate::config::WorkerConfig;
 use crate::hardware::HardwareInfo;
 use crate::job::WorkerRuntime;
-use lao_orchestrator_core::model::ModelRegistry;
+use pig_core::model::ModelRegistry;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
