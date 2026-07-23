@@ -169,25 +169,20 @@ HTTPS) is fine over loopback or a trusted private network (VPN/Tailscale); pig d
 implement public worker discovery and workers are never exposed to the internet by
 default configuration.
 
-## Recommended hardware split
+## Platform support
 
-**Mac M4 Pro, 24 GB unified memory** — primary reasoning model, larger quantization,
-longer context, llama.cpp with Metal (autodetected). `gpu_layers` in a model's
-`LlamaCppExecutionConfig` defaults to `auto`-equivalent behavior when unset; leave
-headroom below the full 24 GB for the OS and other processes rather than assuming it's
-all addressable by one model.
+| Platform | Backend | Status |
+|---|---|---|
+| macOS (Apple Silicon) | llama.cpp + Metal | Tested — Metal autodetected, no configuration needed |
+| Linux x86\_64 + NVIDIA GPU | llama.cpp + CUDA | Tested — build llama.cpp with `-DGGML_CUDA=ON`; pig detects CUDA via `nvidia-smi` and `--list-devices` |
+| Linux x86\_64 (CPU only) | llama.cpp | Tested — set `allow_cpu_fallback = true` when GPU VRAM is insufficient |
+| Windows | llama.cpp | Compiles; systemd lifecycle commands (`worker install/start/stop`) do not apply |
+| AMD ROCm / Vulkan | llama.cpp | llama.cpp supports these; pig's hardware probe does not enumerate them yet |
 
-**Linux desktop, RTX 2080 Super (8 GB VRAM) + 32 GB RAM** — fast 7B–8B coding
-assistant, summarizer, or verifier; llama.cpp with CUDA (autodetected via
-`nvidia-smi`/`--list-devices`); CPU offload (`allow_cpu_fallback = true`) when the model
-doesn't fit in 8 GB of VRAM. Embeddings/reranking are not implemented in v0.5 (both
-backends report `supports_embedding: false, supports_reranking: false`, and
-`/v1/embed`/`/v1/rerank` return an explicit 501) — don't route those roles here yet.
-
-The CPU stays free on both machines for what it's already doing: repository
-parsing/Codebase Memory indexing, git, compilation, tests, and prompt assembly. pig
-routes separate jobs to separate workers; it does not distribute one model's
-transformer layers across machines.
+**Not supported in v0.5:**
+- Distributed single-model inference across machines (no tensor or pipeline parallelism)
+- Embeddings and reranking (both backends return 501 — `/v1/embed` and `/v1/rerank` are not implemented)
+- Automatic model downloads (all model files must be present on the worker's local filesystem)
 
 
 ## CLI reference

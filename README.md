@@ -16,7 +16,7 @@ no cloud, no external APIs.
 
 ```
 pig coordinator serve   →   routes to   →   pig worker serve (llama.cpp)
-    (OpenAI gateway)                            (Fedora / CUDA)
+    (OpenAI gateway)                         (macOS/Metal or Linux/CUDA)
 ```
 
 See [docs/architecture.md](docs/architecture.md) for internals.
