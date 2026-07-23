@@ -8,7 +8,7 @@
 //! worker id, then model id, both lexicographic).
 
 use crate::model::registry::ModelRegistry;
-use crate::model::types::{AcceleratorKind, ModelId, ModelRequest, WorkerId};
+use crate::model::types::{AcceleratorKind, ModelId, ModelRequest, PlacementPolicy, WorkerId};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -169,6 +169,13 @@ fn check_hard_constraints(
     let mut reasons = Vec::new();
     let mut used_cpu_fallback = false;
 
+    if request.requirements.placement_policy == PlacementPolicy::LocalOnly
+        && worker.locality != WorkerLocality::Local
+    {
+        reasons.push(
+            "placement policy requires a local worker but this worker is remote".to_string(),
+        );
+    }
     if !worker.healthy {
         reasons.push("worker is unhealthy".to_string());
     }
@@ -687,6 +694,30 @@ mod tests {
         let text = explanation.to_string();
         assert!(text.starts_with("Selected w1"));
         assert!(text.contains("Rejected w2"));
+    }
+
+    #[test]
+    fn local_only_policy_rejects_remote_worker() {
+        let reg = registry();
+        let mut remote = worker("w1");
+        remote.locality = WorkerLocality::Remote;
+        let mut req = request();
+        req.requirements.placement_policy = PlacementPolicy::LocalOnly;
+        let explanation = schedule(&req, &reg, &[remote], &SchedulingOverrides::default());
+        assert!(explanation.selected.is_none());
+        assert!(explanation
+            .rejected
+            .iter()
+            .any(|r| r.reasons.iter().any(|m| m.contains("local"))));
+    }
+
+    #[test]
+    fn local_only_policy_selects_local_worker() {
+        let reg = registry();
+        let mut req = request();
+        req.requirements.placement_policy = PlacementPolicy::LocalOnly;
+        let explanation = schedule(&req, &reg, &[worker("w1")], &SchedulingOverrides::default());
+        assert!(explanation.selected.is_some());
     }
 
     #[test]

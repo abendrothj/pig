@@ -184,6 +184,19 @@ pub enum ResponseFormat {
     Json,
 }
 
+/// Controls whether the model reasons before responding.
+/// `Auto` leaves the decision to the model or scheduler policy.
+/// `Enabled` / `Disabled` are explicit overrides — translated to backend-specific
+/// control tokens (e.g. `/think` / `/no_think` for Qwen3) by the backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningMode {
+    #[default]
+    Auto,
+    Enabled,
+    Disabled,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct GenerationParameters {
     pub max_tokens: Option<u32>,
@@ -198,6 +211,8 @@ pub struct GenerationParameters {
     #[serde(default)]
     pub tools: Vec<serde_json::Value>,
     pub tool_choice: Option<serde_json::Value>,
+    #[serde(default)]
+    pub reasoning_mode: ReasoningMode,
 }
 
 impl GenerationParameters {
@@ -248,6 +263,17 @@ pub enum AcceleratorKind {
     Cpu,
 }
 
+/// Where the request may be sent for execution.
+/// `Any` allows routing to any registered worker, including remote ones.
+/// `LocalOnly` restricts the scheduler to workers with `WorkerLocality::Local`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlacementPolicy {
+    #[default]
+    Any,
+    LocalOnly,
+}
+
 impl fmt::Display for AcceleratorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
@@ -274,6 +300,8 @@ pub struct ModelRequirements {
     pub minimum_available_memory_bytes: Option<u64>,
     #[serde(default)]
     pub require_streaming: bool,
+    #[serde(default)]
+    pub placement_policy: PlacementPolicy,
 }
 
 fn default_true() -> bool {
@@ -296,6 +324,7 @@ impl Default for ModelRequirements {
             maximum_execution_ms: None,
             minimum_available_memory_bytes: None,
             require_streaming: false,
+            placement_policy: PlacementPolicy::Any,
         }
     }
 }

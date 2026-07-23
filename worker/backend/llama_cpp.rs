@@ -18,7 +18,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use lao_orchestrator_core::model::{
     AcceleratorKind, FinishReason, MessageRole, ModelChunk, ModelId, ModelToolCall,
-    ModelToolFunction,
+    ModelToolFunction, ReasoningMode,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -237,6 +237,26 @@ impl LlamaCppBackend {
     }
 }
 
+/// Appends a reasoning control token to the last user message in-place.
+/// This is a Qwen3-specific protocol: `/think` enables chain-of-thought,
+/// `/no_think` suppresses it. Other models silently ignore the token.
+fn apply_reasoning_mode(messages: &mut Vec<serde_json::Value>, mode: ReasoningMode) {
+    let token = match mode {
+        ReasoningMode::Enabled => " /think",
+        ReasoningMode::Disabled => " /no_think",
+        ReasoningMode::Auto => return,
+    };
+    if let Some(last_user) = messages
+        .iter_mut()
+        .rfind(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
+    {
+        if let Some(content) = last_user.get("content").and_then(|c| c.as_str()) {
+            let new_content = format!("{}{}", content, token);
+            last_user["content"] = serde_json::json!(new_content);
+        }
+    }
+}
+
 fn openai_messages(
     messages: &[lao_orchestrator_core::model::ModelMessage],
 ) -> Vec<serde_json::Value> {
@@ -308,7 +328,18 @@ impl ModelBackend for LlamaCppBackend {
 
     async fn capabilities(&self) -> Result<BackendCapabilities, BackendError> {
         let version = self.executable_version().await;
-        let accelerator = self.detect_accelerator().await;
+        // Read the accelerator from the running server rather than probing via
+        // --list-devices: that probe fails when llama-server already holds the GPU.
+        let from_server = self
+            .server
+            .lock()
+            .await
+            .as_ref()
+            .and_then(|s| s.loaded.accelerator.clone());
+        let accelerator = match from_server {
+            Some(a) => Some(a),
+            None => self.detect_accelerator().await,
+        };
         Ok(BackendCapabilities {
             backend: "llama_cpp".to_string(),
             version,
@@ -472,7 +503,8 @@ impl ModelBackend for LlamaCppBackend {
             (server.base_url.clone(), server.stderr_tail.clone())
         };
 
-        let messages = openai_messages(&request.messages);
+        let mut messages = openai_messages(&request.messages);
+        apply_reasoning_mode(&mut messages, request.parameters.reasoning_mode);
 
         let mut body = serde_json::json!({
             "messages": messages,
@@ -821,6 +853,31 @@ mod tests {
                 },
             }]
         );
+    }
+
+    #[test]
+    fn reasoning_mode_disabled_appends_no_think_to_last_user_message() {
+        let mut msgs = openai_messages(&[
+            ModelMessage::system("You are helpful."),
+            ModelMessage::user("explain entropy"),
+        ]);
+        apply_reasoning_mode(&mut msgs, ReasoningMode::Disabled);
+        assert_eq!(msgs[1]["content"], "explain entropy /no_think");
+        assert_eq!(msgs[0]["content"], "You are helpful."); // system unchanged
+    }
+
+    #[test]
+    fn reasoning_mode_enabled_appends_think_to_last_user_message() {
+        let mut msgs = openai_messages(&[ModelMessage::user("deep question")]);
+        apply_reasoning_mode(&mut msgs, ReasoningMode::Enabled);
+        assert_eq!(msgs[0]["content"], "deep question /think");
+    }
+
+    #[test]
+    fn reasoning_mode_auto_leaves_messages_unchanged() {
+        let mut msgs = openai_messages(&[ModelMessage::user("hello")]);
+        apply_reasoning_mode(&mut msgs, ReasoningMode::Auto);
+        assert_eq!(msgs[0]["content"], "hello");
     }
 
     #[test]
