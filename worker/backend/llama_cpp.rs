@@ -10,15 +10,15 @@
 //! authoritative owner for each child process").
 
 use super::{
-    BackendCapabilities, BackendError, BackendGenerationRequest, BackendGenerationResponse,
-    BackendHealth, LoadModelRequest, LoadedModel, ModelAvailability, ModelBackend,
-    ModelEventSender,
+    apply_reasoning_mode, BackendCapabilities, BackendError, BackendGenerationRequest,
+    BackendGenerationResponse, BackendHealth, LoadModelRequest, LoadedModel, ModelAvailability,
+    ModelBackend, ModelEventSender,
 };
 use async_trait::async_trait;
 use futures::StreamExt;
 use pig_core::model::{
     AcceleratorKind, FinishReason, MessageRole, ModelChunk, ModelId, ModelToolCall,
-    ModelToolFunction, ReasoningMode,
+    ModelToolFunction,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -270,43 +270,6 @@ impl LlamaCppBackend {
 /// result (agentic continuation), modifying an already-sent user message would
 /// be semantically wrong; instead the token is injected via the system message
 /// so the directive applies to this completion only.
-fn apply_reasoning_mode(messages: &mut Vec<serde_json::Value>, mode: ReasoningMode) {
-    let (inline_token, system_token) = match mode {
-        ReasoningMode::Enabled => (" /think", "/think"),
-        ReasoningMode::Disabled => (" /no_think", "/no_think"),
-        ReasoningMode::Auto => return,
-    };
-
-    let last_is_user = messages
-        .last()
-        .and_then(|m| m.get("role").and_then(|r| r.as_str()))
-        == Some("user");
-
-    if last_is_user {
-        let m = messages.last_mut().unwrap();
-        if let Some(c) = m.get("content").and_then(|c| c.as_str()) {
-            let new = format!("{}{}", c, inline_token);
-            m["content"] = serde_json::json!(new);
-        }
-    } else {
-        // Tool continuation: inject via system message to avoid retroactively
-        // modifying a historical user message.
-        if let Some(sys) = messages
-            .iter_mut()
-            .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
-        {
-            if let Some(c) = sys.get("content").and_then(|c| c.as_str()) {
-                let new = format!("{}\n{}", c, system_token);
-                sys["content"] = serde_json::json!(new);
-            }
-        } else {
-            messages.insert(
-                0,
-                serde_json::json!({"role": "system", "content": system_token}),
-            );
-        }
-    }
-}
 
 fn openai_messages(messages: &[pig_core::model::ModelMessage]) -> Vec<serde_json::Value> {
     messages
@@ -808,7 +771,7 @@ fn finish_tool_call_fragments(fragments: BTreeMap<usize, ToolCallFragments>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pig_core::model::{ModelMessage, ModelToolCall, ModelToolFunction};
+    use pig_core::model::{ModelMessage, ModelToolCall, ModelToolFunction, ReasoningMode};
 
     #[test]
     fn execution_config_round_trips_through_json() {

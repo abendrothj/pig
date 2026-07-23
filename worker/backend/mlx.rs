@@ -3,9 +3,9 @@
 //! Metal acceleration automatically on Apple Silicon — no GPU layer configuration.
 
 use super::{
-    BackendCapabilities, BackendError, BackendGenerationRequest, BackendGenerationResponse,
-    BackendHealth, LoadModelRequest, LoadedModel, ModelAvailability, ModelBackend,
-    ModelEventSender,
+    apply_reasoning_mode, BackendCapabilities, BackendError, BackendGenerationRequest,
+    BackendGenerationResponse, BackendHealth, LoadModelRequest, LoadedModel, ModelAvailability,
+    ModelBackend, ModelEventSender,
 };
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -326,7 +326,7 @@ impl ModelBackend for MlxBackend {
                 .ok_or_else(|| BackendError::ModelNotFound(request.model_id.0.clone()))?
         };
 
-        let messages: Vec<serde_json::Value> = request
+        let mut messages: Vec<serde_json::Value> = request
             .messages
             .iter()
             .map(|m| {
@@ -339,6 +339,7 @@ impl ModelBackend for MlxBackend {
                 serde_json::json!({"role": role, "content": m.content})
             })
             .collect();
+        apply_reasoning_mode(&mut messages, request.parameters.reasoning_mode);
 
         let mut body = serde_json::json!({
             "messages": messages,

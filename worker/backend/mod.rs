@@ -12,7 +12,7 @@ pub mod mlx;
 use async_trait::async_trait;
 use pig_core::model::{
     AcceleratorKind, FinishReason, GenerationParameters, ModelChunk, ModelId, ModelMessage,
-    ModelToolCall, RequestId,
+    ModelToolCall, RequestId, ReasoningMode,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -121,6 +121,47 @@ pub struct BackendGenerationResponse {
 }
 
 pub type ModelEventSender = mpsc::Sender<ModelChunk>;
+
+/// Append Qwen3-style `/think` or `/no_think` control tokens so the model
+/// enters or skips the thinking phase. Called by every backend that forwards
+/// to an OpenAI-compatible server (llama.cpp, mlx_lm).
+///
+/// * Last message is user → append inline token to its content.
+/// * Last message is tool/assistant (tool continuation) → inject via system
+///   message so we don't retroactively alter a historical user turn.
+pub(super) fn apply_reasoning_mode(messages: &mut Vec<serde_json::Value>, mode: ReasoningMode) {
+    let (inline_token, system_token) = match mode {
+        ReasoningMode::Enabled => (" /think", "/think"),
+        ReasoningMode::Disabled => (" /no_think", "/no_think"),
+        ReasoningMode::Auto => return,
+    };
+    let last_is_user = messages
+        .last()
+        .and_then(|m| m.get("role").and_then(|r| r.as_str()))
+        == Some("user");
+    if last_is_user {
+        let m = messages.last_mut().unwrap();
+        if let Some(c) = m.get("content").and_then(|c| c.as_str()) {
+            let new = format!("{}{}", c, inline_token);
+            m["content"] = serde_json::json!(new);
+        }
+    } else {
+        if let Some(sys) = messages
+            .iter_mut()
+            .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
+        {
+            if let Some(c) = sys.get("content").and_then(|c| c.as_str()) {
+                let new = format!("{}\n{}", c, system_token);
+                sys["content"] = serde_json::json!(new);
+            }
+        } else {
+            messages.insert(
+                0,
+                serde_json::json!({"role": "system", "content": system_token}),
+            );
+        }
+    }
+}
 
 #[async_trait]
 pub trait ModelBackend: Send + Sync {
