@@ -8,6 +8,24 @@ load state, throughput, TTFT, memory — and exposes an OpenAI-compatible gatewa
 pig does not decompose tasks, orchestrate agents, or understand domains. It owns
 compute; the caller owns intelligence.
 
+## Scope
+
+**Pig is compute, not intelligence.**
+
+| Pig's job | Not pig's job |
+|---|---|
+| Which `(worker, model)` handles this request fastest? | What should the request say? |
+| Load model X on worker Y | Decompose a task into subtasks |
+| Reject requests that exceed a worker's context window | Manage conversation history |
+| Report VRAM, throughput, and TTFT | Choose between local and cloud inference |
+| Route tool-calling requests to capable models | Build or orchestrate agents |
+
+External APIs (OpenAI, Anthropic, Groq) are the caller's concern. If an agent needs
+to fall back to a cloud model when local workers are busy, that logic belongs in the
+agent layer — your orchestrator, your application code. Pig routes to your hardware
+and nothing else. This boundary is intentional: pig is closer to a cluster scheduler
+than an AI framework.
+
 ## Components
 
 - **Worker** (`pig-worker`): Supervises an inference subprocess (`llama-server` or

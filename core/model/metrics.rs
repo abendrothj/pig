@@ -145,7 +145,7 @@ mod tests {
             schema_version: METRICS_SCHEMA_VERSION,
             timestamp_unix_ms: 1_753_000_000_000,
             worker: WorkerIdentityMetrics {
-                worker_id: WorkerId::from("fedora-worker"),
+                worker_id: WorkerId::from("remote-worker"),
                 uptime_seconds: 8_040,
                 lifecycle_state: WorkerLifecycleState::Running,
             },
@@ -241,7 +241,7 @@ mod tests {
             failed_jobs: 1,
             scheduler_decision: None,
             benchmarks: vec![BenchmarkFreshness {
-                worker_id: WorkerId::from("fedora-worker"),
+                worker_id: WorkerId::from("remote-worker"),
                 model_id: ModelId::from("qwen3-8b-q4"),
                 age_seconds: Some(120),
                 fingerprint_valid: true,

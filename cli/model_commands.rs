@@ -1354,7 +1354,7 @@ mod metrics_formatting_tests {
             schema_version: METRICS_SCHEMA_VERSION,
             timestamp_unix_ms: 0,
             worker: WorkerIdentityMetrics {
-                worker_id: WorkerId::from("fedora-worker"),
+                worker_id: WorkerId::from("remote-worker"),
                 uptime_seconds: 8_040, // 2h 14m
                 lifecycle_state: WorkerLifecycleState::Running,
             },
@@ -1421,7 +1421,7 @@ mod metrics_formatting_tests {
     #[test]
     fn formats_a_fully_populated_snapshot_matching_the_expected_shape() {
         let out = format_worker_metrics(&fully_populated());
-        assert!(out.contains("Worker: fedora-worker"));
+        assert!(out.contains("Worker: remote-worker"));
         assert!(out.contains("State: running"));
         assert!(out.contains("Uptime: 2h 14m"));
         assert!(out.contains("Queue: 1 / 8"));
@@ -1462,19 +1462,19 @@ mod metrics_formatting_tests {
             scheduler_decision: None,
             benchmarks: vec![
                 BenchmarkFreshness {
-                    worker_id: WorkerId::from("fedora-worker"),
+                    worker_id: WorkerId::from("remote-worker"),
                     model_id: ModelId::from("qwen2.5-8b-q4"),
                     age_seconds: Some(120),
                     fingerprint_valid: true,
                 },
                 BenchmarkFreshness {
-                    worker_id: WorkerId::from("fedora-worker"),
+                    worker_id: WorkerId::from("remote-worker"),
                     model_id: ModelId::from("old-model"),
                     age_seconds: Some(999_999),
                     fingerprint_valid: false,
                 },
                 BenchmarkFreshness {
-                    worker_id: WorkerId::from("fedora-worker"),
+                    worker_id: WorkerId::from("remote-worker"),
                     model_id: ModelId::from("never-benchmarked"),
                     age_seconds: None,
                     fingerprint_valid: false,

@@ -446,7 +446,7 @@ mod tests {
     fn sample_config() -> WorkerConfig {
         WorkerConfig::from_toml_str(
             "[worker]\n\
-             id = \"fedora-worker\"\n\
+             id = \"remote-worker\"\n\
              bind = \"100.64.0.1:9847\"\n\
              shutdown_grace_seconds = 20\n\
              [worker.auth]\n\
@@ -459,7 +459,7 @@ mod tests {
     #[test]
     fn unit_file_uses_the_configured_worker_id() {
         let unit = generate_unit_file(&sample_config());
-        assert!(unit.contains("Description=pig model-inference worker (fedora-worker)"));
+        assert!(unit.contains("Description=pig model-inference worker (remote-worker)"));
     }
 
     #[test]

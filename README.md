@@ -1,25 +1,64 @@
-# pig — Private Inference Gateway
+# pig
+
+```
+              _,------,_
+           ,-'           `-.
+          /                 \
+         /   ,---.   ,---.   \
+        |   / @@@ \ / @@@ \   |
+        |  | @@@@@ | @@@@@ |  |
+        |   \ @@@ / \ @@@ /   |
+        |    `---'   `---'    |
+        |       `-----'       |
+        |         ,--,        |
+        |        ( ww )       |
+        |         `--'        |
+         \                   /
+          `--.___________,--'
+                   |||
+
+  ██████╗ ██╗ ██████╗
+  ██╔══██╗██║██╔════╝
+  ██████╔╝██║██║  ███╗
+  ██╔═══╝ ██║██║   ██║
+  ██║     ██║╚██████╔╝
+  ╚═╝     ╚═╝ ╚═════╝
+
+  Private Inference Gateway
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Pig owns compute. You own intelligence.
+```
 
 ![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)
 ![Made with Rust](https://img.shields.io/badge/Made%20with-Rust-orange?logo=rust)
 
-pig is an OpenAI-compatible inference gateway that routes generation requests
-across private llama.cpp workers over LAN. Runs entirely on local hardware —
-no cloud, no external APIs.
+pig is a hardware-aware inference router for your own GPU machines. It schedules
+generation requests across your workers, manages model loading, tracks throughput and
+latency, and exposes an OpenAI-compatible API at the coordinator.
 
-## What it does
+pig does not orchestrate agents, manage prompts, decompose tasks, or proxy external
+APIs. Those belong in the caller. pig's only job is: *given this request, which
+`(worker, model)` pair completes it fastest?*
 
-- Routes requests to the right worker based on hardware constraints and model role.
-- Supervises `llama-server` subprocesses, manages job queues, and reports telemetry.
-- Exposes an OpenAI-compatible `/v1/chat/completions` endpoint at the coordinator.
-- Installs workers as systemd services on Linux.
+Think Kubernetes for your GPUs, not LangChain.
+
+## Architecture
 
 ```
-pig coordinator serve   →   routes to   →   pig worker serve (llama.cpp)
-    (OpenAI gateway)                         (macOS/Metal or Linux/CUDA)
+your agent / OpenAI client
+         │
+         ▼
+Coordinator (scheduler)         ← hard constraints + scoring
+         │
+         ├── Worker A  [CUDA]   llama.cpp
+         ├── Worker B  [Metal]  mlx_lm
+         └── Worker C  [CUDA]   llama.cpp
 ```
 
-See [docs/architecture.md](docs/architecture.md) for internals.
+The coordinator applies hard constraints (context window, tool support, reasoning
+capability, accelerator type, placement policy) then scores eligible placements by
+load state, queue depth, throughput, and TTFT. The winning `(worker, model)` pair
+gets the request. See [docs/architecture.md](docs/architecture.md) for internals.
 
 ## Install
 
@@ -40,21 +79,21 @@ cargo build --release
 ## Quick start
 
 ```bash
-# Start a worker (manages llama-server, exposes HTTP API)
+# Start a worker (supervises llama-server or mlx_lm.server)
 pig worker serve --config pig.toml
 
-# List registered workers and their loaded models
+# Check registered workers
 pig workers list
 
-# Send a generation request to the best available worker
+# Route a generation request to the best available worker
 pig models generate --role reasoning --prompt "Explain backpressure in one paragraph."
 
-# Route via the OpenAI-compatible coordinator
+# Start the OpenAI-compatible coordinator
 pig coordinator serve --config pig.toml
 ```
 
-See [docs/cli.md](docs/cli.md) for all commands and [docs/local-inference.md](docs/local-inference.md)
-for worker/model configuration.
+See [docs/cli.md](docs/cli.md) for all commands and
+[docs/local-inference.md](docs/local-inference.md) for worker and model configuration.
 
 ## Configuration
 
