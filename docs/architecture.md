@@ -2,15 +2,50 @@
 
 ## Overview
 
-pig is an inference coordinator for local llama.cpp workers. It routes generation requests to the right worker based on hardware constraints, exposes an OpenAI-compatible gateway, and manages worker lifecycle via systemd.
+pig is a hardware-aware inference scheduler and coordinator for local model workers.
+It routes generation requests across workers based on real runtime measurements —
+load state, throughput, TTFT, memory — and exposes an OpenAI-compatible gateway.
+pig does not decompose tasks, orchestrate agents, or understand domains. It owns
+compute; the caller owns intelligence.
 
 ## Components
 
-- **Worker** (`pig-worker`): Supervises a `llama-server` subprocess, exposes a JSON HTTP API, manages a bounded job queue, and reports hardware capabilities and telemetry.
-- **Coordinator** (`worker::coordinator`): Schedules requests across configured workers using constraint-based selection. Implemented as a synchronous `ModelInvoker` over `reqwest::blocking` — no async runtime required at the call site.
-- **Coordinator server** (`worker::coordinator_server`): Persistent HTTP service exposing an OpenAI-compatible gateway (`POST /v1/chat/completions`, `GET /v1/models`) and a control plane API.
-- **Core** (`pig-core`): Shared types — `ModelRequest`, `ModelResponse`, `ModelRole`, `ReasoningMode`, `PlacementPolicy`, `Artifact`, scheduler logic, model registry.
+- **Worker** (`pig-worker`): Supervises an inference subprocess (`llama-server` or
+  `mlx_lm.server`), exposes a JSON HTTP API, manages a bounded job queue, and
+  reports hardware capabilities and telemetry.
+- **Coordinator** (`worker::coordinator`): Schedules requests across configured
+  workers using constraint-based selection. Implemented as a synchronous
+  `ModelInvoker` over `reqwest::blocking` — no async runtime required at the call
+  site.
+- **Coordinator server** (`worker::coordinator_server`): Persistent HTTP service
+  exposing an OpenAI-compatible gateway (`POST /v1/chat/completions`,
+  `GET /v1/models`, `POST /v1/pipeline`) and a control plane API.
+- **Core** (`pig-core`): Shared types — `ModelRequest`, `ModelResponse`,
+  `ModelRole`, `ReasoningMode`, `PlacementPolicy`, scheduler logic, model registry,
+  benchmark store.
 - **CLI** (`pig`): Manages workers, models, routes, jobs, and coordinator lifecycle.
+
+## Scheduling primitive: ModelInstance
+
+The scheduler's unit of capacity is a **ModelInstance** — a `(worker, model)` pair
+with known runtime state:
+
+```
+Hardware
+   ↓
+Worker
+   ↓
+ModelInstance  ←  load state, context window, accelerators, benchmark data
+   ↓
+Scheduler decision
+   ↓
+Inference execution
+```
+
+Two workers running the same model are distinct instances. One may be hot, one cold;
+one may have benchmark data, one may not. `GET /v1/instances` surfaces the full
+view. Benchmark data is always absent rather than penalised — a model with no
+history is not disadvantaged against benchmarked peers.
 
 ## Request flow
 
@@ -19,34 +54,83 @@ pig / OpenAI client
         |
         v
 Coordinator (scheduler)
-        |-- hard constraints (placement policy, accelerator, locality)
-        |-- scoring (load, capability match)
+        |-- hard constraints (placement policy, accelerator, locality,
+        |                     context window, memory, tool_calling, reasoning)
+        |-- scoring (load state, queue depth, throughput, TTFT)
         v
 Worker HTTP API  (/v1/generate or /v1/stream)
         |
         v
-ModelBackend (llama_cpp)
+ModelBackend (llama_cpp | mlx)
         |
         v
-llama-server subprocess
+llama-server / mlx_lm.server subprocess
         |
         v
-ModelResponse (output artifact + execution metadata)
+ModelResponse (output artifact + full execution metadata)
 ```
 
 ## Scheduling
 
-Two layers:
+Two phases, always in order:
 
-1. **Hard constraints** — reject workers that cannot satisfy the request: model not in the worker's known-model list, wrong accelerator type, remote worker when `PlacementPolicy::LocalOnly` is set, queue full, available memory below `minimum_available_memory_bytes`.
-2. **Scoring** — among eligible workers, score by queue depth, benchmark throughput, and whether the requested model is already hot in memory (+100 bonus for a loaded model, avoiding a cold-start load).
+1. **Hard constraints** — reject `(worker, model)` placements that cannot satisfy
+   the request. Each rejection carries an explicit reason. All constraints are
+   evaluated (not short-circuited) so the routing explanation is complete.
+   Constraints include: model not known to worker, wrong accelerator type, remote
+   worker when `PlacementPolicy::LocalOnly`, queue full, available memory below
+   floor, context window too small, `tool_calling` or `reasoning` capability absent.
 
-Both inputs — `loaded_models` and `available_memory_bytes` — are populated from the worker's `/v1/capabilities` response on every snapshot probe. Workers report them from `backend.list_models()` and a TTL-cached hardware probe respectively.
+2. **Scoring** — among eligible placements, score by:
+   - +100 if the model is already loaded (avoids cold-start)
+   - Queue depth (inverse — fewer queued jobs scores higher)
+   - Measured generation throughput from benchmark records
+   - TTFT (lower p50_ttft_ms scores higher — capped contribution)
+   - Worker priority setting
+   - Accelerator preference
 
-`ReasoningMode` (Auto/Enabled/Disabled) is resolved in the coordinator before dispatch. `Auto` maps to `Enabled` for reasoning/coding roles and when tools are present; `Disabled` otherwise. The backend receives only the resolved value and injects the appropriate control token (`/think` or `/no_think`) for Qwen3-style models.
+Both `loaded_models` and `available_memory_bytes` are populated live from each
+worker's `/v1/capabilities` response on every snapshot probe.
+
+## Capability routing
+
+Capabilities are facts about a model, declared in `pig.toml`:
+
+- `tool_calling: bool` — model supports structured tool calls. `llama_cpp` defaults
+  true; `mlx` defaults false. Per-entry override wins.
+- `reasoning: bool` — model supports extended chain-of-thought (Qwen3 `/think`,
+  DeepSeek R1, etc.). Not declared by default; opt in per model.
+
+Requests set matching requirements (`requirements.reasoning = true`); the scheduler
+hard-rejects any model that doesn't satisfy them.
+
+`ReasoningMode` (Auto/Enabled/Disabled) is resolved in the coordinator before
+dispatch. `Auto` maps to `Enabled` for reasoning/coding roles and when tools are
+present; `Disabled` otherwise. The backend receives only the resolved value and
+injects the appropriate control token (`/think` or `/no_think`) for Qwen3-style
+models.
+
+## Backends
+
+| Backend | Runtime | Model format | Accelerator |
+|---|---|---|---|
+| `llama_cpp` | `llama-server` subprocess | GGUF | CUDA, Metal, Vulkan, CPU |
+| `mlx` | `mlx_lm.server` subprocess | HuggingFace directory | Metal (Apple Silicon only) |
+| `fake` | in-process | — | — (CI / tests) |
+
+Each worker runs exactly one backend. Multiple workers on the same machine use
+different ports. pig does not split model layers across machines.
+
+## Auto-benchmark
+
+`pig models load` triggers a background benchmark immediately after a successful
+load. The benchmark runs 3 passes and stores the median generation t/s, prompt t/s,
+and p50 TTFT to `.pig_benchmarks/<model-id>.jsonl`. The scheduler uses this data on
+the next request — no explicit `pig models benchmark` call is needed.
 
 ## Worker isolation
 
-Each worker is an independent OS process running its own `llama-server`. pig does not split model layers across machines — it routes different jobs to different workers. Multiple workers on the same machine use different ports.
-
-Workers can be run directly via `pig worker serve` or installed as a systemd service via `pig worker install`.
+Each worker is an independent OS process. pig routes different jobs to different
+workers; it never distributes one model's layers between machines. Workers can be
+run directly via `pig worker serve` or installed as a systemd service via
+`pig worker install`.

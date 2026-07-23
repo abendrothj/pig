@@ -70,7 +70,19 @@ dispatched through the full scheduler.
 
 `role` defaults to `reasoning` when omitted. `requirements` is the same
 `ModelRequirements` struct used by `/v1/generate` — accelerator preference,
-memory floor, placement policy, timeouts. When `inject_previous` is `true`, the
+memory floor, placement policy, capability constraints, timeouts:
+
+```json
+{
+  "minimum_context_tokens": 32768,
+  "require_accelerator": true,
+  "reasoning": true,
+  "tool_calling": true
+}
+```
+
+`reasoning: true` hard-rejects any model not tagged `reasoning = true` in the
+registry. `tool_calling: true` is enforced the same way. When `inject_previous` is `true`, the
 previous step's text output is prepended as an `assistant` message before the
 current step's messages; the caller controls context threading, pig executes it.
 

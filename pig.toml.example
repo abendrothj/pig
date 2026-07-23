@@ -9,6 +9,8 @@ path = "/path/to/Qwen3-8B-Q4_K_M.gguf"
 backend = "llama_cpp"
 context_tokens = 8192
 roles = ["reasoning"]
+reasoning = true    # supports /think mode; requests with requirements.reasoning=true route here
+tool_calling = true # explicit override; llama_cpp defaults to true, mlx defaults to false
 
 # Optional: backend execution parameters. All fields are optional.
 # gpu_layers: number of transformer layers to offload to GPU (-1 = all)
