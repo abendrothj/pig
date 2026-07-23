@@ -1,6 +1,6 @@
 # LAO — Local AI Workflow Orchestrator
 
-![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)
 ![Made with Rust](https://img.shields.io/badge/Made%20with-Rust-orange?logo=rust)
 
 LAO is a headless engine and CLI for chaining local plugins into DAG-based
@@ -134,4 +134,4 @@ allow_plugins = []
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Apache-2.0 — see [LICENSE](LICENSE).

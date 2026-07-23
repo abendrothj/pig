@@ -24,9 +24,6 @@ jobs:
           - os: macos-latest
             target: x86_64-apple-darwin
             archive: tar.gz
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            archive: zip
 
     steps:
       - uses: actions/checkout@v4
@@ -47,22 +44,14 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           STAGING="lao-${VERSION}-${{ matrix.target }}"
           mkdir -p "${STAGING}/bin" "${STAGING}/plugins"
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            cp target/release/lao-cli.exe "${STAGING}/bin/"
-          else
-            cp target/release/lao-cli "${STAGING}/bin/"
-          fi
-          find plugins -path '*/target/release/lib*' \( -name '*.so' -o -name '*.dylib' -o -name '*.dll' \) -print | while read -r lib; do
+          cp target/release/lao-cli "${STAGING}/bin/"
+          find plugins -path '*/target/release/lib*' \( -name '*.so' -o -name '*.dylib' \) -print | while read -r lib; do
             plugin_name="$(echo "$lib" | cut -d/ -f2)"
             mkdir -p "${STAGING}/plugins/${plugin_name}"
             cp "$lib" "${STAGING}/plugins/${plugin_name}/"
           done
           cp README.md lao.toml.example "${STAGING}/"
-          if [ "${{ matrix.archive }}" = "zip" ]; then
-            powershell Compress-Archive -Path "${STAGING}/*" -DestinationPath "lao-${VERSION}-${{ matrix.target }}.zip"
-          else
-            tar czf "lao-${VERSION}-${{ matrix.target }}.tar.gz" "${STAGING}"
-          fi
+          tar czf "lao-${VERSION}-${{ matrix.target }}.tar.gz" "${STAGING}"
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v2

@@ -12,4 +12,4 @@ members = [
 version = "0.3.0"
 edition = "2021"
 authors = ["Jake Abendroth <contact@jakea.net>"]
-license = "MIT"
+license = "Apache-2.0"
