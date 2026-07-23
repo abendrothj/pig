@@ -343,6 +343,7 @@ impl ModelBackend for MlxBackend {
         let mut body = serde_json::json!({
             "messages": messages,
             "stream": true,
+            "stream_options": {"include_usage": true},
         });
         let p = &request.parameters;
         if let Some(v) = p.max_tokens {
@@ -388,6 +389,8 @@ impl ModelBackend for MlxBackend {
         let mut generation_ms = 0u64;
         let mut prompt_tps: Option<f64> = None;
         let mut gen_tps: Option<f64> = None;
+        let wall_start = Instant::now();
+        let mut first_token_at: Option<Instant> = None;
 
         loop {
             let chunk = tokio::select! {
@@ -418,6 +421,9 @@ impl ModelBackend for MlxBackend {
                         .and_then(|c| c.as_str())
                     {
                         if !delta_content.is_empty() {
+                            if first_token_at.is_none() {
+                                first_token_at = Some(Instant::now());
+                            }
                             content.push_str(delta_content);
                             let _ = events
                                 .send(ModelChunk::TextDelta {
@@ -443,31 +449,22 @@ impl ModelBackend for MlxBackend {
                         .get("completion_tokens")
                         .and_then(|v| v.as_u64())
                         .unwrap_or(0) as u32;
-                    // mlx_lm reports timings in seconds under usage.timings
-                    if let Some(timings) = usage.get("timings") {
-                        if let Some(secs) = timings
-                            .get("prompt_tps")
-                            .and_then(|v| v.as_f64())
-                        {
-                            prompt_tps = Some(secs);
+                    // mlx_lm.server does not report per-phase timings; derive from wall clock.
+                    let wall_elapsed = wall_start.elapsed();
+                    if let Some(ttft) = first_token_at {
+                        let prefill_ms = ttft.duration_since(wall_start).as_millis() as u64;
+                        let decode_ms = wall_elapsed
+                            .as_millis()
+                            .saturating_sub(prefill_ms as u128) as u64;
+                        prompt_ms = prefill_ms;
+                        generation_ms = decode_ms;
+                        if prefill_ms > 0 && prompt_tokens > 0 {
+                            prompt_tps =
+                                Some(prompt_tokens as f64 / (prefill_ms as f64 / 1000.0));
                         }
-                        if let Some(secs) = timings
-                            .get("generation_tps")
-                            .and_then(|v| v.as_f64())
-                        {
-                            gen_tps = Some(secs);
-                        }
-                        if let Some(ms) = timings
-                            .get("prompt_time")
-                            .and_then(|v| v.as_f64())
-                        {
-                            prompt_ms = (ms * 1000.0) as u64;
-                        }
-                        if let Some(ms) = timings
-                            .get("generation_time")
-                            .and_then(|v| v.as_f64())
-                        {
-                            generation_ms = (ms * 1000.0) as u64;
+                        if decode_ms > 0 && completion_tokens > 0 {
+                            gen_tps =
+                                Some(completion_tokens as f64 / (decode_ms as f64 / 1000.0));
                         }
                     }
                 }

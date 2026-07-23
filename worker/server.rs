@@ -330,10 +330,10 @@ async fn load_model(
             format!("unknown model id '{}'", model_id),
         );
     };
-    if !entry.path.is_file() {
+    if !entry.path.exists() {
         return error_response(
             StatusCode::NOT_FOUND,
-            format!("model file not found: {}", entry.path.display()),
+            format!("model path not found: {}", entry.path.display()),
         );
     }
     let execution_config = if req.execution_config.is_null() {
@@ -402,10 +402,10 @@ fn resolve_model(
             ),
         ));
     };
-    if !entry.path.is_file() {
+    if !entry.path.exists() {
         return Err((
             StatusCode::NOT_FOUND,
-            format!("model file not found: {}", entry.path.display()),
+            format!("model path not found: {}", entry.path.display()),
         ));
     }
     Ok(ResolvedGeneration {

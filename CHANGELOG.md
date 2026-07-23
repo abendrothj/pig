@@ -23,8 +23,8 @@ This project follows semantic versioning.
 - **MLX backend** (`backend = "mlx"`) for Apple Silicon: supervises `mlx_lm.server`
   (from the `mlx-lm` Python package), accepts HuggingFace model directories instead
   of GGUF files, reports `Metal` accelerator, and is selectable via
-  `[worker.runtime.mlx] enabled = true`. 1.5–2× faster than llama.cpp on M-series
-  hardware for many models.
+  `[worker.runtime.mlx] enabled = true`. Generation throughput advantage over
+  llama.cpp varies by model size; larger models (7B+) typically benefit more.
 - **Session affinity in pipelines**: `POST /v1/pipeline` accepts `"session_affinity": true`
   to pin all steps after the first to the worker that served step 0, keeping the
   computation on the same warm machine without exposing worker addresses to callers.

@@ -898,12 +898,12 @@ fn run_benchmark(
         model: Some(ModelSelector::Id(model_id_typed.clone())),
         messages: vec![ModelMessage {
             role: MessageRole::User,
-            content: "Reply with a short, one-sentence greeting.".to_string(),
+            content: "Count from 1 to 50. Write each number on its own line. Do not add any other text.".to_string(),
             tool_calls: vec![],
             tool_call_id: None,
         }],
         parameters: GenerationParameters {
-            max_tokens: Some(64),
+            max_tokens: Some(200),
             temperature: Some(0.0),
             ..Default::default()
         },

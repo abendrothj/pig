@@ -239,7 +239,7 @@ default configuration.
 | Platform | Backend | Status |
 |---|---|---|
 | macOS (Apple Silicon) | llama.cpp + Metal | Tested — Metal autodetected, no configuration needed |
-| macOS (Apple Silicon) | MLX | Tested — 1.5–2× faster than llama.cpp on M-series; requires `mlx-lm` Python package |
+| macOS (Apple Silicon) | MLX | Tested — generation throughput advantage over llama.cpp varies by model size; 7B+ models typically show a larger benefit due to memory bandwidth; requires `mlx-lm` Python package |
 | Linux x86\_64 + NVIDIA GPU | llama.cpp + CUDA | Tested — build llama.cpp with `-DGGML_CUDA=ON`; pig detects CUDA via `nvidia-smi` and `--list-devices` |
 | Linux x86\_64 (CPU only) | llama.cpp | Tested — set `allow_cpu_fallback = true` when GPU VRAM is insufficient |
 | Windows | llama.cpp | Compiles; systemd lifecycle commands (`worker install/start/stop`) do not apply |
