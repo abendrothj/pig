@@ -251,7 +251,20 @@ fn openai_messages(
             };
             let mut value = serde_json::json!({"role": role, "content": message.content});
             if !message.tool_calls.is_empty() {
-                value["tool_calls"] = serde_json::to_value(&message.tool_calls).unwrap_or_default();
+                value["tool_calls"] = serde_json::json!(message
+                    .tool_calls
+                    .iter()
+                    .map(|call| {
+                        serde_json::json!({
+                            "id": call.id,
+                            "type": "function",
+                            "function": {
+                                "name": call.function.name,
+                                "arguments": call.function.arguments,
+                            },
+                        })
+                    })
+                    .collect::<Vec<_>>());
             }
             if let Some(tool_call_id) = &message.tool_call_id {
                 value["tool_call_id"] = serde_json::json!(tool_call_id);
@@ -770,6 +783,7 @@ mod tests {
 
         assert_eq!(messages[0]["role"], "assistant");
         assert_eq!(messages[0]["tool_calls"][0]["id"], "call_lookup");
+        assert_eq!(messages[0]["tool_calls"][0]["type"], "function");
         assert_eq!(
             messages[0]["tool_calls"][0]["function"]["arguments"],
             r#"{"id":42}"#

@@ -253,9 +253,13 @@ fn normalize_openai_request(
 async fn openai_models(
     State(_state): State<Arc<CoordinatorServerState>>,
 ) -> Json<serde_json::Value> {
+    let created = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     let ids = ["lao-coding", "lao-reasoning", "lao-verification"];
     Json(
-        serde_json::json!({"object":"list", "data": ids.into_iter().map(|id| serde_json::json!({"id":id,"object":"model","owned_by":"lao"})).collect::<Vec<_>>() }),
+        serde_json::json!({"object":"list", "data": ids.into_iter().map(|id| serde_json::json!({"id":id,"object":"model","created":created,"owned_by":"lao"})).collect::<Vec<_>>() }),
     )
 }
 
