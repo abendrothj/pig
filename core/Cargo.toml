@@ -1,9 +1,10 @@
 [package]
 name = "lao-orchestrator-core"
 version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "Core DAG engine and backend for LAO Orchestrator"
 authors.workspace = true
-edition.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

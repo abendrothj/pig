@@ -2,6 +2,7 @@
 name = "lao-cli"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "Command-line interface for LAO - Local AI Orchestrator"
 authors.workspace = true
 
