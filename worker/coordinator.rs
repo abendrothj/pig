@@ -871,8 +871,14 @@ auth_token_env = "LAO_LINUX_WORKER_TOKEN"
         ));
     }
 
-    fn reasoning_request(role: ModelRole, tools: Vec<serde_json::Value>, mode: ReasoningMode) -> ModelRequest {
-        use lao_orchestrator_core::model::{GenerationParameters, ModelMessage, ModelRequirements, RequestId};
+    fn reasoning_request(
+        role: ModelRole,
+        tools: Vec<serde_json::Value>,
+        mode: ReasoningMode,
+    ) -> ModelRequest {
+        use lao_orchestrator_core::model::{
+            GenerationParameters, ModelMessage, ModelRequirements, RequestId,
+        };
         ModelRequest {
             request_id: RequestId::generate(),
             role,

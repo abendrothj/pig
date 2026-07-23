@@ -172,9 +172,8 @@ fn check_hard_constraints(
     if request.requirements.placement_policy == PlacementPolicy::LocalOnly
         && worker.locality != WorkerLocality::Local
     {
-        reasons.push(
-            "placement policy requires a local worker but this worker is remote".to_string(),
-        );
+        reasons
+            .push("placement policy requires a local worker but this worker is remote".to_string());
     }
     if !worker.healthy {
         reasons.push("worker is unhealthy".to_string());

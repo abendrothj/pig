@@ -274,7 +274,10 @@ fn apply_reasoning_mode(messages: &mut Vec<serde_json::Value>, mode: ReasoningMo
                 sys["content"] = serde_json::json!(new);
             }
         } else {
-            messages.insert(0, serde_json::json!({"role": "system", "content": system_token}));
+            messages.insert(
+                0,
+                serde_json::json!({"role": "system", "content": system_token}),
+            );
         }
     }
 }
