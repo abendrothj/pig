@@ -98,6 +98,17 @@ MLX handles quantization and Metal acceleration automatically — there are no `
 
 pig detects that the MLX backend is running and reports `Metal` as the accelerator in worker snapshots and routing explanations, so the scheduler scores MLX workers the same way as llama.cpp workers with Metal.
 
+**MLX vs llama.cpp + Metal on M-series (measured on M4 Pro, Q4_K_M / 4-bit quantization):**
+
+| Model | Backend | Generation t/s | p50 TTFT |
+|---|---|---|---|
+| Llama 3.2 1B | llama.cpp + Metal | 220 | 16ms |
+| Llama 3.2 1B | MLX | 248 | 67ms |
+| Llama 3.1 8B | llama.cpp + Metal | 48 | 32ms\* |
+| Llama 3.1 8B | MLX | 49 | 10,400ms |
+
+Generation throughput is comparable. Prefill throughput at 8B is a significant MLX weakness — a 58-token prompt takes ~10s to process on MLX vs sub-second on llama.cpp. The pig scheduler's TTFT scoring routes latency-sensitive requests to the faster option automatically. `\*`llama.cpp TTFT on runs 2-3 benefits from KV cache reuse on the identical benchmark prompt; real-world first-request TTFT is higher but still well under 1s at 8B.
+
 ## Adding a GGUF model
 
 ```bash
@@ -239,7 +250,7 @@ default configuration.
 | Platform | Backend | Status |
 |---|---|---|
 | macOS (Apple Silicon) | llama.cpp + Metal | Tested — Metal autodetected, no configuration needed |
-| macOS (Apple Silicon) | MLX | Tested — generation throughput advantage over llama.cpp varies by model size; 7B+ models typically show a larger benefit due to memory bandwidth; requires `mlx-lm` Python package |
+| macOS (Apple Silicon) | MLX | Tested — generation throughput is comparable to llama.cpp + Metal at tested sizes (1B: ~1.1×, 8B: ~1.0×); prefill is significantly slower on uncached prompts at 8B (~5 t/s vs ~200+ t/s for llama.cpp); TTFT scoring in the scheduler will route latency-sensitive work to llama.cpp automatically; requires `mlx-lm` Python package |
 | Linux x86\_64 + NVIDIA GPU | llama.cpp + CUDA | Tested — build llama.cpp with `-DGGML_CUDA=ON`; pig detects CUDA via `nvidia-smi` and `--list-devices` |
 | Linux x86\_64 (CPU only) | llama.cpp | Tested — set `allow_cpu_fallback = true` when GPU VRAM is insufficient |
 | Windows | llama.cpp | Compiles; systemd lifecycle commands (`worker install/start/stop`) do not apply |
