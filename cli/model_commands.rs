@@ -650,8 +650,12 @@ pub fn models_load(model_id: String, worker: Option<String>) {
     match resp {
         Ok(r) if r.status().is_success() => {
             println!("{}", r.text().unwrap_or_default());
-            println!("Running auto-benchmark...");
-            models_benchmark(model_id, worker, false);
+            let model_id_bg = model_id.clone();
+            let worker_bg = worker.clone();
+            std::thread::spawn(move || {
+                models_benchmark_silent(model_id_bg, worker_bg);
+            });
+            println!("Auto-benchmark running in background.");
         }
         Ok(r) => {
             eprintln!(
@@ -872,11 +876,16 @@ fn stream_generate(target: &WorkerEndpointConfig, request: &ModelRequest) {
     println!();
 }
 
-pub fn models_benchmark(model_id: String, worker: Option<String>, json: bool) {
+/// Runs a single benchmark generation and persists the record. Returns `(record,
+/// response, target_worker)` so callers can decide what to print.
+fn run_benchmark(
+    model_id: &str,
+    worker: Option<String>,
+) -> Option<(BenchmarkRecord, pig_core::model::ModelResponse, WorkerEndpointConfig)> {
     let workers = require_workers();
-    let target = resolve_target_worker(&workers, worker.clone());
+    let target = resolve_target_worker(&workers, worker);
     let registry = load_registry();
-    let model_id_typed = ModelId::from(model_id.clone());
+    let model_id_typed = ModelId::from(model_id);
     let file_size_bytes = registry
         .get(&model_id_typed)
         .and_then(|entry| std::fs::metadata(&entry.path).ok())
@@ -886,7 +895,7 @@ pub fn models_benchmark(model_id: String, worker: Option<String>, json: bool) {
     let request = ModelRequest {
         request_id: RequestId::generate(),
         role: ModelRole::Reasoning,
-        model: Some(ModelSelector::Id(model_id.clone().into())),
+        model: Some(ModelSelector::Id(model_id_typed.clone())),
         messages: vec![ModelMessage {
             role: MessageRole::User,
             content: "Reply with a short, one-sentence greeting.".to_string(),
@@ -948,6 +957,20 @@ pub fn models_benchmark(model_id: String, worker: Option<String>, json: bool) {
         eprintln!("[WARN] failed to persist benchmark record: {}", e);
     }
 
+    Some((record, response, target))
+}
+
+/// Background-safe variant: runs the benchmark but produces no stdout output.
+/// Called after `pig models load` so the scheduler gets fresh data immediately.
+pub fn models_benchmark_silent(model_id: String, worker: Option<String>) {
+    run_benchmark(&model_id, worker);
+}
+
+pub fn models_benchmark(model_id: String, worker: Option<String>, json: bool) {
+    let Some((record, response, target)) = run_benchmark(&model_id, worker) else {
+        eprintln!("[ERROR] benchmark failed");
+        std::process::exit(1);
+    };
     if json {
         println!(
             "{}",

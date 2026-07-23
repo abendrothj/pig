@@ -22,6 +22,12 @@ pub struct ModelEntry {
     /// execution_config is provided by the caller.
     #[serde(default)]
     pub execution_config: serde_json::Value,
+    /// Override the backend's default tool-calling capability for this specific model.
+    /// `None` means "defer to the backend" (llama_cpp defaults true, mlx defaults false).
+    /// Set `true` to assert a model supports tool calls regardless of backend default,
+    /// or `false` to disable tool routing even on a capable backend.
+    #[serde(default)]
+    pub tool_calling: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -105,6 +111,8 @@ impl ModelRegistry {
             roles: Vec<String>,
             #[serde(default)]
             execution_config: serde_json::Value,
+            #[serde(default)]
+            tool_calling: Option<bool>,
         }
         #[derive(Deserialize)]
         struct ModelsToml {
@@ -136,6 +144,7 @@ impl ModelRegistry {
                 estimated_memory_bytes: e.estimated_memory_bytes,
                 roles: e.roles.iter().map(|r| ModelRole::parse(r)).collect(),
                 execution_config: e.execution_config,
+                tool_calling: e.tool_calling,
             })
             .collect();
 
@@ -317,6 +326,7 @@ cache_type_k = "q8_0"
                 estimated_memory_bytes: None,
                 roles: vec![],
                 execution_config: serde_json::Value::Null,
+                tool_calling: None,
             },
             ModelEntry {
                 id: ModelId::from("a"),
@@ -327,6 +337,7 @@ cache_type_k = "q8_0"
                 estimated_memory_bytes: None,
                 roles: vec![],
                 execution_config: serde_json::Value::Null,
+                tool_calling: None,
             },
         ];
         let err = ModelRegistry::new(entries, BTreeMap::new()).unwrap_err();
@@ -362,6 +373,7 @@ cache_type_k = "q8_0"
             estimated_memory_bytes: None,
             roles: vec![],
             execution_config: serde_json::Value::Null,
+            tool_calling: None,
         };
         let registry = ModelRegistry::new(vec![entry], BTreeMap::new()).unwrap();
         let resolved = registry.resolve(&ModelId::from("local")).unwrap();

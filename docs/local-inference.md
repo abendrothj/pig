@@ -131,6 +131,16 @@ parses the period as a nested-table separator and the entry silently splits into
 wrong keys. This is standard TOML syntax, not a pig-specific quirk, but it's an easy
 mistake with quantization-style names.
 
+`tool_calling` overrides the backend's default capability at the model level. `llama_cpp`
+defaults to `true`; `mlx` defaults to `false`. Set it explicitly when a model's actual
+support differs from its backend's default:
+
+```toml
+[models.entries."qwen3-8b-q4"]
+# ...
+tool_calling = true    # explicit: this model supports tool calls via llama_cpp
+```
+
 Roles let a workflow ask for "reasoning" or "coding" without naming a specific model:
 
 ```toml

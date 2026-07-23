@@ -496,6 +496,7 @@ mod tests {
             estimated_memory_bytes: Some(mem),
             roles: roles.to_vec(),
             execution_config: serde_json::Value::Null,
+            tool_calling: None,
         }
     }
 

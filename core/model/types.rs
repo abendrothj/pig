@@ -572,6 +572,26 @@ impl ModelResponse {
     }
 }
 
+/// A single available inference resource: one model on one worker, with its current
+/// load state and benchmark data. The scheduler chooses capacity (a ModelInstance),
+/// not just a machine — two workers running the same model are not equivalent if one
+/// is loaded, cold, or has different measured throughput.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelInstance {
+    /// Stable unique key: `"{worker_id}/{model_id}"`.
+    pub instance_id: String,
+    pub worker_id: WorkerId,
+    pub model_id: ModelId,
+    pub backend: String,
+    /// Whether the model is currently loaded and ready (no cold-start penalty).
+    pub loaded: bool,
+    pub context_tokens: Option<u32>,
+    pub accelerators: Vec<AcceleratorKind>,
+    /// Fresh benchmark data for this (worker, model) pair; `None` when no matching
+    /// record exists yet (e.g. model was never benchmarked on this worker).
+    pub benchmark: Option<crate::model::BenchmarkSummary>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

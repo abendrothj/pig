@@ -7,6 +7,19 @@ This project follows semantic versioning.
 ## [0.5.0] — 2026-07-23
 
 ### Added
+- **`ModelInstance` abstraction**: coordinator now exposes `GET /v1/instances` listing
+  all known models across all workers as first-class inference resources, sorted by
+  load state then benchmark throughput. Each instance carries `instance_id`, `loaded`,
+  `context_tokens`, `accelerators`, and `benchmark` — making the scheduler's actual
+  capacity view visible to API callers. Two workers running the same model are distinct
+  instances.
+- **Model-level `tool_calling` capability** on `ModelEntry`: set `tool_calling = true`
+  or `false` in `[models.entries.*]` to override the backend's blanket default. The
+  coordinator checks the model registry before the worker snapshot, so an MLX-served
+  model that actually supports tools can be marked as such without changing the backend.
+- **Async auto-benchmark**: `pig models load` prints "Auto-benchmark running in
+  background." and returns immediately; the benchmark runs in a detached thread and
+  writes the record to `.pig_benchmarks/` without blocking the user.
 - **MLX backend** (`backend = "mlx"`) for Apple Silicon: supervises `mlx_lm.server`
   (from the `mlx-lm` Python package), accepts HuggingFace model directories instead
   of GGUF files, reports `Metal` accelerator, and is selectable via

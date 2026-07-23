@@ -9,9 +9,9 @@ use crate::defer_drop::DeferDrop;
 use futures::{Stream, StreamExt};
 use pig_core::model::{
     latest_matching_benchmark, schedule, BenchmarkFingerprint, BenchmarkSummary, FinishReason,
-    ModelChunk, ModelExecutionError, ModelExecutionMetadata, ModelId, ModelInvoker, ModelRegistry,
-    ModelRequest, ModelResponse, ModelResponseStatus, ModelRole, ModelUsage, ReasoningMode,
-    RoutingExplanation, SchedulingOverrides, WorkerId, WorkerLocality, WorkerSnapshot,
+    ModelChunk, ModelExecutionError, ModelExecutionMetadata, ModelId, ModelInstance, ModelInvoker,
+    ModelRegistry, ModelRequest, ModelResponse, ModelResponseStatus, ModelRole, ModelUsage,
+    ReasoningMode, RoutingExplanation, SchedulingOverrides, WorkerId, WorkerLocality, WorkerSnapshot,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -150,6 +150,57 @@ impl Coordinator {
     /// specific request - used by `workers list`/`workers health`.
     pub fn snapshots(&self) -> Vec<WorkerSnapshot> {
         self.workers.iter().map(|w| self.snapshot(w)).collect()
+    }
+
+    /// All model instances across all configured workers, from most to least desirable
+    /// (loaded first, then by benchmark score). This is the coordinator-level view of
+    /// available inference capacity — two workers running the same model are distinct
+    /// instances with potentially very different performance characteristics.
+    pub async fn model_instances(&self) -> Vec<ModelInstance> {
+        let snapshots = self.async_snapshots().await;
+        let mut instances: Vec<ModelInstance> = snapshots
+            .iter()
+            .flat_map(|snapshot| {
+                snapshot.known_models.iter().map(|model_id| {
+                    let loaded = snapshot.loaded_models.contains(model_id);
+                    let context_tokens = self
+                        .registry
+                        .get(model_id)
+                        .and_then(|e| e.context_tokens);
+                    ModelInstance {
+                        instance_id: format!("{}/{}", snapshot.worker_id.0, model_id.0),
+                        worker_id: snapshot.worker_id.clone(),
+                        model_id: model_id.clone(),
+                        backend: snapshot.backend.clone(),
+                        loaded,
+                        context_tokens,
+                        accelerators: snapshot.accelerators.clone(),
+                        benchmark: snapshot.benchmarks.get(model_id).cloned(),
+                    }
+                })
+            })
+            .collect();
+        // Loaded instances first, then by generation throughput descending.
+        instances.sort_by(|a, b| {
+            b.loaded
+                .cmp(&a.loaded)
+                .then_with(|| {
+                    let tps_b = b
+                        .benchmark
+                        .as_ref()
+                        .and_then(|bm| bm.generation_tokens_per_second)
+                        .unwrap_or(0.0);
+                    let tps_a = a
+                        .benchmark
+                        .as_ref()
+                        .and_then(|bm| bm.generation_tokens_per_second)
+                        .unwrap_or(0.0);
+                    tps_b
+                        .partial_cmp(&tps_a)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+        });
+        instances
     }
 
     /// Async-native discovery for the long-running server. The embedded workflow
@@ -369,9 +420,9 @@ impl Coordinator {
         schedule(request, &self.registry, &snapshots, overrides)
     }
 
-    /// Tool compatibility is a worker capability, not an OpenAI-gateway guess.
-    /// Reuse the existing scheduler decision rather than adding a second placement
-    /// policy at the protocol boundary.
+    /// Whether the placement selected for `request` can honor tool definitions.
+    /// Model-level `tool_calling` in the registry takes precedence over the backend's
+    /// blanket capability — a model knows its own tool support better than its backend.
     pub fn selected_worker_supports_tools(&self, request: &ModelRequest) -> bool {
         let snapshots = self.snapshots();
         let route = schedule(
@@ -380,14 +431,18 @@ impl Coordinator {
             &snapshots,
             &SchedulingOverrides::default(),
         );
-        route
-            .selected
-            .and_then(|placement| {
-                snapshots
-                    .iter()
-                    .find(|snapshot| snapshot.worker_id == placement.worker_id)
-            })
-            .map(|snapshot| snapshot.supports_tools)
+        let Some(placement) = route.selected else {
+            return false;
+        };
+        // Model-level override wins.
+        if let Some(model_override) = self.registry.get(&placement.model_id).and_then(|e| e.tool_calling) {
+            return model_override;
+        }
+        // Fall back to backend capability.
+        snapshots
+            .iter()
+            .find(|s| s.worker_id == placement.worker_id)
+            .map(|s| s.supports_tools)
             .unwrap_or(false)
     }
 
@@ -422,7 +477,13 @@ impl Coordinator {
             .ok_or_else(|| {
                 CoordinatorStreamError::WorkerUnavailable(placement.worker_id.0.clone())
             })?;
-        if !request.parameters.tools.is_empty() && !snapshot.supports_tools {
+        // Model-level override takes precedence over the backend's blanket capability.
+        let model_supports_tools = self
+            .registry
+            .get(&placement.model_id)
+            .and_then(|e| e.tool_calling)
+            .unwrap_or(snapshot.supports_tools);
+        if !request.parameters.tools.is_empty() && !model_supports_tools {
             return Err(CoordinatorStreamError::ToolsUnsupported);
         }
 

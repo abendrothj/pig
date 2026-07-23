@@ -17,9 +17,10 @@ use axum::{
 };
 use futures::StreamExt;
 use pig_core::model::{
-    FinishReason, GenerationParameters, MessageRole, ModelChunk, ModelInvoker, ModelMessage,
-    ModelRequest, ModelRequirements, ModelResponseStatus, ModelRole, ModelSelector, ModelToolCall,
-    ModelToolFunction, RequestId, RoutingExplanation, SchedulingOverrides, WorkerId, WorkerSnapshot,
+    FinishReason, GenerationParameters, MessageRole, ModelChunk, ModelInstance, ModelInvoker,
+    ModelMessage, ModelRequest, ModelRequirements, ModelResponseStatus, ModelRole, ModelSelector,
+    ModelToolCall, ModelToolFunction, RequestId, RoutingExplanation, SchedulingOverrides, WorkerId,
+    WorkerSnapshot,
 };
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
@@ -108,6 +109,12 @@ async fn workers_list(
 ) -> Json<Vec<WorkerSnapshot>> {
     let snapshots = state.coordinator.async_snapshots().await;
     Json(snapshots)
+}
+
+async fn instances_list(
+    State(state): State<Arc<CoordinatorServerState>>,
+) -> Json<Vec<ModelInstance>> {
+    Json(state.coordinator.model_instances().await)
 }
 
 #[derive(Debug, Deserialize)]
@@ -681,6 +688,7 @@ pub fn router(state: Arc<CoordinatorServerState>) -> Router {
     Router::new()
         .route("/v1/health", get(health))
         .route("/v1/workers", get(workers_list))
+        .route("/v1/instances", get(instances_list))
         .route("/v1/generate", post(generate))
         .route("/v1/route", post(route_explain))
         .route("/v1/models", get(openai_models))
