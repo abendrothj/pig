@@ -11,7 +11,8 @@ use pig_core::model::{
     latest_matching_benchmark, schedule, BenchmarkFingerprint, BenchmarkSummary, FinishReason,
     ModelChunk, ModelExecutionError, ModelExecutionMetadata, ModelId, ModelInstance, ModelInvoker,
     ModelRegistry, ModelRequest, ModelResponse, ModelResponseStatus, ModelRole, ModelUsage,
-    ReasoningMode, RoutingExplanation, SchedulingOverrides, WorkerId, WorkerLocality, WorkerSnapshot,
+    ReasoningMode, RoutingExplanation, SchedulingOverrides, WorkerId, WorkerLocality,
+    WorkerSnapshot,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -163,10 +164,7 @@ impl Coordinator {
             .flat_map(|snapshot| {
                 snapshot.known_models.iter().map(|model_id| {
                     let loaded = snapshot.loaded_models.contains(model_id);
-                    let context_tokens = self
-                        .registry
-                        .get(model_id)
-                        .and_then(|e| e.context_tokens);
+                    let context_tokens = self.registry.get(model_id).and_then(|e| e.context_tokens);
                     ModelInstance {
                         instance_id: format!("{}/{}", snapshot.worker_id.0, model_id.0),
                         worker_id: snapshot.worker_id.clone(),
@@ -182,23 +180,21 @@ impl Coordinator {
             .collect();
         // Loaded instances first, then by generation throughput descending.
         instances.sort_by(|a, b| {
-            b.loaded
-                .cmp(&a.loaded)
-                .then_with(|| {
-                    let tps_b = b
-                        .benchmark
-                        .as_ref()
-                        .and_then(|bm| bm.generation_tokens_per_second)
-                        .unwrap_or(0.0);
-                    let tps_a = a
-                        .benchmark
-                        .as_ref()
-                        .and_then(|bm| bm.generation_tokens_per_second)
-                        .unwrap_or(0.0);
-                    tps_b
-                        .partial_cmp(&tps_a)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
+            b.loaded.cmp(&a.loaded).then_with(|| {
+                let tps_b = b
+                    .benchmark
+                    .as_ref()
+                    .and_then(|bm| bm.generation_tokens_per_second)
+                    .unwrap_or(0.0);
+                let tps_a = a
+                    .benchmark
+                    .as_ref()
+                    .and_then(|bm| bm.generation_tokens_per_second)
+                    .unwrap_or(0.0);
+                tps_b
+                    .partial_cmp(&tps_a)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
         });
         instances
     }
@@ -233,14 +229,14 @@ impl Coordinator {
         if let Some(token) = self.auth_header(worker) {
             caps_req = caps_req.bearer_auth(token);
         }
-        let caps: serde_json::Value =
-            match caps_req.send().await.and_then(|r| r.error_for_status()) {
-                Ok(resp) => match resp.json().await {
-                    Ok(v) => v,
-                    Err(_) => return self.unhealthy_snapshot(worker),
-                },
+        let caps: serde_json::Value = match caps_req.send().await.and_then(|r| r.error_for_status())
+        {
+            Ok(resp) => match resp.json().await {
+                Ok(v) => v,
                 Err(_) => return self.unhealthy_snapshot(worker),
-            };
+            },
+            Err(_) => return self.unhealthy_snapshot(worker),
+        };
         self.parse_snapshot(worker, &health, &caps)
     }
 
@@ -329,9 +325,7 @@ impl Coordinator {
                     .collect()
             })
             .unwrap_or_default();
-        let available_memory_bytes = caps
-            .get("available_memory_bytes")
-            .and_then(|v| v.as_u64());
+        let available_memory_bytes = caps.get("available_memory_bytes").and_then(|v| v.as_u64());
 
         // Coarse but real: built the same way at benchmark-record time (see
         // cli::model_commands::models_benchmark), from data the worker itself reports
@@ -435,7 +429,11 @@ impl Coordinator {
             return false;
         };
         // Model-level override wins.
-        if let Some(model_override) = self.registry.get(&placement.model_id).and_then(|e| e.tool_calling) {
+        if let Some(model_override) = self
+            .registry
+            .get(&placement.model_id)
+            .and_then(|e| e.tool_calling)
+        {
             return model_override;
         }
         // Fall back to backend capability.
@@ -855,9 +853,7 @@ auth_token_env = "PIG_LINUX_WORKER_TOKEN"
         tools: Vec<serde_json::Value>,
         mode: ReasoningMode,
     ) -> ModelRequest {
-        use pig_core::model::{
-            GenerationParameters, ModelMessage, ModelRequirements, RequestId,
-        };
+        use pig_core::model::{GenerationParameters, ModelMessage, ModelRequirements, RequestId};
         ModelRequest {
             request_id: RequestId::generate(),
             role,

@@ -93,9 +93,6 @@ fn require_workers() -> Vec<WorkerEndpointConfig> {
     workers
 }
 
-
-
-
 // ---------------------------------------------------------------------------
 // worker serve
 // ---------------------------------------------------------------------------
@@ -119,46 +116,44 @@ pub fn worker_serve(config: Option<String>) {
 
     let rt = tokio::runtime::Runtime::new().expect("failed to build tokio runtime");
     rt.block_on(async move {
-        let (backend, backend_name): (
-            std::sync::Arc<dyn pig_worker::backend::ModelBackend>,
-            &str,
-        ) = if worker_config.runtime.mlx.enabled {
-            (
-                std::sync::Arc::new(pig_worker::backend::mlx::MlxBackend::new(
-                    pig_worker::backend::mlx::MlxConfig {
-                        server_executable: PathBuf::from(
-                            &worker_config.runtime.mlx.server_executable,
-                        ),
-                        startup_timeout: std::time::Duration::from_secs(
-                            worker_config.runtime.mlx.startup_timeout_seconds,
-                        ),
-                        request_timeout: std::time::Duration::from_secs(
-                            worker_config.runtime.mlx.request_timeout_seconds,
-                        ),
-                    },
-                )),
-                "mlx",
-            )
-        } else if worker_config.runtime.llama_cpp.enabled {
-            (
-                std::sync::Arc::new(pig_worker::backend::llama_cpp::LlamaCppBackend::new(
-                    pig_worker::backend::llama_cpp::LlamaCppConfig {
-                        server_executable: PathBuf::from(
-                            &worker_config.runtime.llama_cpp.server_executable,
-                        ),
-                        host: "127.0.0.1".to_string(),
-                        startup_timeout: worker_config.llama_cpp_startup_timeout(),
-                        request_timeout: worker_config.llama_cpp_request_timeout(),
-                    },
-                )),
-                "llama_cpp",
-            )
-        } else {
-            (
-                std::sync::Arc::new(pig_worker::backend::fake::FakeBackend::new()),
-                "fake",
-            )
-        };
+        let (backend, backend_name): (std::sync::Arc<dyn pig_worker::backend::ModelBackend>, &str) =
+            if worker_config.runtime.mlx.enabled {
+                (
+                    std::sync::Arc::new(pig_worker::backend::mlx::MlxBackend::new(
+                        pig_worker::backend::mlx::MlxConfig {
+                            server_executable: PathBuf::from(
+                                &worker_config.runtime.mlx.server_executable,
+                            ),
+                            startup_timeout: std::time::Duration::from_secs(
+                                worker_config.runtime.mlx.startup_timeout_seconds,
+                            ),
+                            request_timeout: std::time::Duration::from_secs(
+                                worker_config.runtime.mlx.request_timeout_seconds,
+                            ),
+                        },
+                    )),
+                    "mlx",
+                )
+            } else if worker_config.runtime.llama_cpp.enabled {
+                (
+                    std::sync::Arc::new(pig_worker::backend::llama_cpp::LlamaCppBackend::new(
+                        pig_worker::backend::llama_cpp::LlamaCppConfig {
+                            server_executable: PathBuf::from(
+                                &worker_config.runtime.llama_cpp.server_executable,
+                            ),
+                            host: "127.0.0.1".to_string(),
+                            startup_timeout: worker_config.llama_cpp_startup_timeout(),
+                            request_timeout: worker_config.llama_cpp_request_timeout(),
+                        },
+                    )),
+                    "llama_cpp",
+                )
+            } else {
+                (
+                    std::sync::Arc::new(pig_worker::backend::fake::FakeBackend::new()),
+                    "fake",
+                )
+            };
         let backend_name = backend_name.to_string();
 
         let auth_token = match worker_config.resolve_auth_token() {
@@ -945,7 +940,11 @@ const BENCHMARK_RUNS: usize = 3;
 fn run_benchmark(
     model_id: &str,
     worker: Option<String>,
-) -> Option<(BenchmarkRecord, pig_core::model::ModelResponse, WorkerEndpointConfig)> {
+) -> Option<(
+    BenchmarkRecord,
+    pig_core::model::ModelResponse,
+    WorkerEndpointConfig,
+)> {
     let workers = require_workers();
     let target = resolve_target_worker(&workers, worker);
     let registry = load_registry();
@@ -961,7 +960,9 @@ fn run_benchmark(
         model: Some(ModelSelector::Id(model_id_typed.clone())),
         messages: vec![ModelMessage {
             role: MessageRole::User,
-            content: "Count from 1 to 50. Write each number on its own line. Do not add any other text.".to_string(),
+            content:
+                "Count from 1 to 50. Write each number on its own line. Do not add any other text."
+                    .to_string(),
             tool_calls: vec![],
             tool_call_id: None,
         }],
@@ -1159,9 +1160,7 @@ pub fn route_explain(role: Option<String>, model: Option<String>, json: bool, pr
     }
 }
 
-fn explanation_json(
-    explanation: &pig_core::model::RoutingExplanation,
-) -> serde_json::Value {
+fn explanation_json(explanation: &pig_core::model::RoutingExplanation) -> serde_json::Value {
     serde_json::json!({
         "selected": explanation.selected.as_ref().map(|p| serde_json::json!({
             "worker_id": p.worker_id.0,

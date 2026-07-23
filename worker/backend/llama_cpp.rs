@@ -308,9 +308,7 @@ fn apply_reasoning_mode(messages: &mut Vec<serde_json::Value>, mode: ReasoningMo
     }
 }
 
-fn openai_messages(
-    messages: &[pig_core::model::ModelMessage],
-) -> Vec<serde_json::Value> {
+fn openai_messages(messages: &[pig_core::model::ModelMessage]) -> Vec<serde_json::Value> {
     messages
         .iter()
         .map(|message| {

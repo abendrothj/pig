@@ -163,7 +163,10 @@ enum ModelsAction {
         stream: bool,
         #[arg(long, help = "Pin the request to a specific worker id")]
         force_worker: Option<String>,
-        #[arg(long, help = "Require CPU execution even if an accelerator is available")]
+        #[arg(
+            long,
+            help = "Require CPU execution even if an accelerator is available"
+        )]
         force_cpu: bool,
     },
     /// Run a short benchmark prompt against a model and record the result

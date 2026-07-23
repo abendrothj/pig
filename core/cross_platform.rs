@@ -49,7 +49,11 @@ mod tests {
 
     #[test]
     fn exactly_one_platform_flag_is_true() {
-        let flags = [Platform::is_linux(), Platform::is_macos(), Platform::is_windows()];
+        let flags = [
+            Platform::is_linux(),
+            Platform::is_macos(),
+            Platform::is_windows(),
+        ];
         assert!(flags.iter().any(|&f| f));
     }
 }

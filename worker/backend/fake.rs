@@ -8,9 +8,7 @@ use super::{
     ModelEventSender,
 };
 use async_trait::async_trait;
-use pig_core::model::{
-    AcceleratorKind, FinishReason, MessageRole, ModelChunk, ModelId,
-};
+use pig_core::model::{AcceleratorKind, FinishReason, MessageRole, ModelChunk, ModelId};
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::RwLock;

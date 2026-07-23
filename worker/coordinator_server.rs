@@ -331,7 +331,10 @@ async fn pipeline(
     Json(body): Json<PipelineRequest>,
 ) -> Response {
     if body.steps.is_empty() {
-        return error_response(StatusCode::BAD_REQUEST, "pipeline must have at least one step");
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "pipeline must have at least one step",
+        );
     }
     let session_affinity = body.session_affinity;
     let mut outputs: Vec<PipelineStepOutput> = Vec::with_capacity(body.steps.len());

@@ -385,7 +385,7 @@ cache_type_k = "q8_0"
             roles: vec![],
             execution_config: serde_json::Value::Null,
             tool_calling: None,
-                reasoning: None,
+            reasoning: None,
         };
         let registry = ModelRegistry::new(vec![entry], BTreeMap::new()).unwrap();
         let resolved = registry.resolve(&ModelId::from("local")).unwrap();

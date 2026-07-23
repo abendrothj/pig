@@ -453,18 +453,15 @@ impl ModelBackend for MlxBackend {
                     let wall_elapsed = wall_start.elapsed();
                     if let Some(ttft) = first_token_at {
                         let prefill_ms = ttft.duration_since(wall_start).as_millis() as u64;
-                        let decode_ms = wall_elapsed
-                            .as_millis()
-                            .saturating_sub(prefill_ms as u128) as u64;
+                        let decode_ms =
+                            wall_elapsed.as_millis().saturating_sub(prefill_ms as u128) as u64;
                         prompt_ms = prefill_ms;
                         generation_ms = decode_ms;
                         if prefill_ms > 0 && prompt_tokens > 0 {
-                            prompt_tps =
-                                Some(prompt_tokens as f64 / (prefill_ms as f64 / 1000.0));
+                            prompt_tps = Some(prompt_tokens as f64 / (prefill_ms as f64 / 1000.0));
                         }
                         if decode_ms > 0 && completion_tokens > 0 {
-                            gen_tps =
-                                Some(completion_tokens as f64 / (decode_ms as f64 / 1000.0));
+                            gen_tps = Some(completion_tokens as f64 / (decode_ms as f64 / 1000.0));
                         }
                     }
                 }

@@ -208,9 +208,7 @@ fn check_hard_constraints(
                     ));
                 }
             }
-            if request.requirements.reasoning == Some(true)
-                && entry.reasoning != Some(true)
-            {
+            if request.requirements.reasoning == Some(true) && entry.reasoning != Some(true) {
                 reasons.push(format!(
                     "request requires a reasoning-capable model but '{}' is not tagged reasoning = true",
                     model_id
@@ -824,18 +822,28 @@ mod tests {
 
         // Reasoning-capable model: must be selected.
         let mut req = request();
-        req.model = Some(crate::model::types::ModelSelector::Id(ModelId::from("think")));
+        req.model = Some(crate::model::types::ModelSelector::Id(ModelId::from(
+            "think",
+        )));
         req.requirements.reasoning = Some(true);
         let exp = schedule(&req, &reg, &[w.clone()], &SchedulingOverrides::default());
         assert!(exp.selected.is_some(), "reasoning model should be selected");
 
         // Non-reasoning model with reasoning requirement: must be rejected.
         let mut req2 = request();
-        req2.model = Some(crate::model::types::ModelSelector::Id(ModelId::from("small")));
+        req2.model = Some(crate::model::types::ModelSelector::Id(ModelId::from(
+            "small",
+        )));
         req2.requirements.reasoning = Some(true);
         let exp2 = schedule(&req2, &reg, &[w], &SchedulingOverrides::default());
-        assert!(exp2.selected.is_none(), "non-reasoning model must be rejected");
-        assert!(exp2.rejected.iter().any(|r| r.reasons.iter().any(|s| s.contains("reasoning"))));
+        assert!(
+            exp2.selected.is_none(),
+            "non-reasoning model must be rejected"
+        );
+        assert!(exp2
+            .rejected
+            .iter()
+            .any(|r| r.reasons.iter().any(|s| s.contains("reasoning"))));
     }
 
     #[test]
