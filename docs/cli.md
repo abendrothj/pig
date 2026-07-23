@@ -1,77 +1,85 @@
-# LAO CLI Documentation
+# lao CLI
 
 ## Usage
+
 ```
 lao <COMMAND> [OPTIONS]
 ```
 
-## Commands
-- `run <workflow.yaml> [--dry-run]`  
-  Run a workflow. Use `--dry-run` to validate plugin availability without executing steps.
-- `validate <workflow.yaml>`  
-  Validate workflow structure, types, and plugin availability.
-- `plugin-list`  
-  List all dynamically loaded plugins.
-- `new-workflow <name> [--output <file>]`  
-  Scaffold a starter workflow YAML file.
-- `prompt <prompt> [--output <file>]`  
-  Generate a workflow from a natural language prompt using `PromptDispatcherPlugin`.
-- `validate-prompts [--path <json>] [--fail-fast] [--verbose]`  
-  Validate prompt-to-workflow generation using the prompt library.
-- `list-workflows`, `view-workflow <name>`, `delete-workflow <name>`  
-  Manage workflow YAML files under `workflows/`.
-- `explain-plugin <name>`  
-  Show manifest details and examples for a bundled plugin.
-- `schedule`, `unschedule`, `list-scheduled`, `run-due`, `status`, `cleanup`  
-  Manage persisted workflow schedule and execution state metadata. `run-due`
-  manually executes due enabled schedules; LAO does not run a background daemon.
+## Worker
 
-### Scheduling in production
-
-LAO intentionally has no long-running scheduler daemon. The supported production pattern
-is to drive `run-due` from the system scheduler:
-
-```cron
-# Check for due workflows every 5 minutes (Linux/macOS cron)
-*/5 * * * * cd /opt/lao && /usr/local/bin/lao-cli run-due >> /var/log/lao/run-due.log 2>&1
+```bash
+lao worker serve [--config lao.toml]    # start the worker daemon (foreground)
+lao worker install [--config lao.toml]  # install as a systemd service (Linux)
+lao worker uninstall [--purge-user]
+lao worker start | stop | restart | status
+lao worker logs [--follow] [--lines N]
 ```
 
-(On Windows, use Task Scheduler to invoke `lao-cli run-due` on the same interval.)
+## Workers
 
-`run-due` acquires an advisory lock file (`.run-due.lock`) in the state directory before
-executing. If a previous invocation is still running when the next cron tick fires, the
-new invocation exits non-zero with `another run-due invocation is in progress` instead of
-double-running schedules. Stale locks (older than one hour, e.g. after a crash) are
-reclaimed automatically.
+Inspect configured workers from the coordinator side.
+
+```bash
+lao workers list [--json]
+lao workers inspect <worker-id> [--json]
+lao workers health [--json]                   # non-zero exit if any worker is unhealthy
+lao workers metrics [<worker-id>] [--json]    # omit worker-id for aggregate
+```
+
+## Models
+
+```bash
+lao models list [--json]
+lao models inspect <model-id> [--json]
+lao models discover --directory <path>        # scan for GGUF files, does not write config
+lao models load <model-id> [--worker <id>]
+lao models unload <model-id> [--worker <id>]
+lao models generate --prompt "..." \
+    [--role <role> | --model <id>] \
+    [--system "..."] [--max-tokens N] [--temperature F] \
+    [--stream] [--json] [--force-worker <id>] [--force-cpu]
+lao models benchmark <model-id> [--worker <id>] [--json]
+```
+
+`--stream` prints tokens as they arrive. Without it, `models generate` waits for the full response. `--json` emits the complete structured `ModelResponse`.
+
+## Route
+
+```bash
+lao route explain [--role <role> | --model <id>] [--json]
+```
+
+Shows which worker and model would be selected for a request, and why — including which workers were rejected and the reason.
+
+## Jobs
+
+```bash
+lao jobs list --worker <id> [--json]
+lao jobs inspect <job-id> --worker <id> [--json]
+lao jobs cancel <job-id> --worker <id>
+```
+
+## Coordinator
+
+```bash
+lao coordinator serve \
+    [--config lao.toml] \
+    [--bind 0.0.0.0:3001] \
+    [--auth-token-env VAR]
+```
+
+Starts the coordinator as a persistent HTTP service exposing the OpenAI-compatible API at `/v1/chat/completions` and `/v1/models`. See `docs/openai-compatibility.md`.
+
+## Profile selection
+
+```bash
+lao --profile remote models list    # use [profiles.remote] from lao.toml
+```
 
 ## Logging
 
-Set `RUST_LOG` to control CLI/core diagnostics:
-
 ```bash
-RUST_LOG=info lao run workflows/test_loop.yaml
-RUST_LOG=debug lao plugin-list
+RUST_LOG=info lao workers health
+RUST_LOG=debug lao models generate --role reasoning --prompt "hello"
 ```
-
-## Execution Modes
-
-### Sequential Execution
-- Steps execute one at a time, even if they're independent
-- Use for debugging, testing, or when strict ordering is required
-- Use the sequential workflow runner APIs when embedding the core crate.
-
-### Parallel Execution
-- Automatically detects and executes independent steps concurrently
-- Steps are grouped into execution levels based on dependencies
-- Steps within the same level run in parallel; levels execute sequentially
-- Available through `run_workflow_yaml_parallel_with_callback` in the core crate.
-
-## Examples
-```
-lao run workflows/test_loop.yaml
-lao run workflows/test_loop.yaml --dry-run
-lao validate workflows/test_loop.yaml
-lao plugin-list
-lao prompt "Summarize this audio and tag action items"
-lao validate-prompts --path core/prompt_dispatcher/prompt/prompt_library.json --verbose
-``` 

@@ -4,12 +4,10 @@ members = [
     "core",
     "cli",
     "worker",
-    "lao_plugin_api",
-    "plugins/*",
 ]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.1.0"
 edition = "2021"
 authors = ["Jake Abendroth <contact@jakea.net>"]
 license = "Apache-2.0"

@@ -93,29 +93,8 @@ fn require_workers() -> Vec<WorkerEndpointConfig> {
     workers
 }
 
-/// Builds a `ModelInvoker` from `[[workers]]` config when any are configured, so
-/// `lao-cli run` can execute `local_llm` steps. Returns `None` (not an error) when no
-/// workers are configured - workflows without any `local_llm` step are completely
-/// unaffected, and one with a `local_llm` step will fail with a clear per-step error
-/// from `StepExecutor` rather than this function guessing at a default.
-pub fn build_model_invoker() -> Option<std::sync::Arc<dyn ModelInvoker>> {
-    let workers = load_workers();
-    if workers.is_empty() {
-        return None;
-    }
-    Some(std::sync::Arc::new(Coordinator::new(
-        workers,
-        load_registry(),
-    )))
-}
 
-fn require_model_inference_trust() {
-    let trust = lao_orchestrator_core::trust::TrustPolicy::load_default();
-    if !trust.allows_class(lao_orchestrator_core::trust::CapabilityClass::ModelInference) {
-        eprintln!("[ERROR] requires trust.allow_model_inference = true in lao.toml");
-        std::process::exit(1);
-    }
-}
+
 
 // ---------------------------------------------------------------------------
 // worker serve
@@ -646,7 +625,6 @@ fn with_worker_auth(
 }
 
 pub fn models_load(model_id: String, worker: Option<String>) {
-    require_model_inference_trust();
     let workers = require_workers();
     let target = resolve_target_worker(&workers, worker);
     let client = reqwest::blocking::Client::new();
@@ -730,7 +708,6 @@ pub fn models_generate(
     force_worker: Option<String>,
     force_cpu: bool,
 ) {
-    require_model_inference_trust();
     let workers = require_workers();
     let registry = load_registry();
 
@@ -804,7 +781,7 @@ pub fn models_generate(
         );
     } else {
         match &response.output {
-            lao_orchestrator_core::execution::Artifact::Text(t) => println!("{}", t),
+            lao_orchestrator_core::artifact::Artifact::Text(t) => println!("{}", t),
             other => println!("{:?}", other),
         }
         eprintln!(
@@ -882,7 +859,6 @@ fn stream_generate(target: &WorkerEndpointConfig, request: &ModelRequest) {
 }
 
 pub fn models_benchmark(model_id: String, worker: Option<String>, json: bool) {
-    require_model_inference_trust();
     let workers = require_workers();
     let target = resolve_target_worker(&workers, worker.clone());
     let registry = load_registry();

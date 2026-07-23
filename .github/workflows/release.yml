@@ -31,10 +31,6 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build plugins
-        shell: bash
-        run: bash scripts/build-plugins.sh
-
       - name: Build CLI (release)
         run: cargo build --release --bin lao-cli
 
@@ -43,13 +39,8 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           STAGING="lao-${VERSION}-${{ matrix.target }}"
-          mkdir -p "${STAGING}/bin" "${STAGING}/plugins"
+          mkdir -p "${STAGING}/bin"
           cp target/release/lao-cli "${STAGING}/bin/"
-          find plugins -path '*/target/release/lib*' \( -name '*.so' -o -name '*.dylib' \) -print | while read -r lib; do
-            plugin_name="$(echo "$lib" | cut -d/ -f2)"
-            mkdir -p "${STAGING}/plugins/${plugin_name}"
-            cp "$lib" "${STAGING}/plugins/${plugin_name}/"
-          done
           cp README.md lao.toml.example "${STAGING}/"
           tar czf "lao-${VERSION}-${{ matrix.target }}.tar.gz" "${STAGING}"
 

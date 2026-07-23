@@ -1,4 +1,4 @@
-# LAO v0.5 — Local Model Inference
+# lao — Local Model Inference
 
 LAO can run local language models through a supervised `llama-server` (llama.cpp)
 process, route requests across one or more registered workers based on hardware and
@@ -9,35 +9,25 @@ source modules (`core/model/`, `worker/`).
 ## Architecture
 
 ```
-Workflow step (run: local_llm)          lao-cli models generate / route explain
-        |                                         |
-        v                                         v
-   ModelRequest  ------------------------->  Coordinator
-        |                                    (scheduler + HTTP client)
-        |                                         |
-        v                                         v
-core::model::scheduler::schedule()  --->  selects a worker + model
+lao-cli / OpenAI client
         |
         v
-   Worker (separate process, `lao-cli worker serve`)
+Coordinator (scheduler + HTTP client)
         |
         v
-   ModelBackend (llama_cpp or fake)
+Worker (separate process, `lao worker serve`)
         |
         v
-   llama-server subprocess (real inference) / FakeBackend (deterministic, for CI)
+ModelBackend (llama_cpp)
         |
         v
-   ModelResponse (structured: output artifact + full execution metadata)
+llama-server subprocess
+        |
+        v
+ModelResponse (structured: output artifact + full execution metadata)
 ```
 
-A worker is always a separate OS process from whatever is running a workflow or the
-CLI. `core` (the workflow engine) never links a model runtime and never spawns HTTP
-clients or async runtimes itself — it only defines `ModelInvoker`, a synchronous trait
-implemented by `worker::coordinator::Coordinator` (using `reqwest::blocking`
-specifically, so calling it never requires a nested tokio runtime). All async
-complexity (the HTTP server, job queue, `llama-server` subprocess supervision) lives in
-the `lao-worker` crate.
+A worker is always a separate OS process from the CLI or coordinator. `core` defines `ModelInvoker`, a synchronous trait implemented by `worker::coordinator::Coordinator` using `reqwest::blocking` — calling it never requires a nested tokio runtime. All async complexity lives in `lao-worker`.
 
 **LAO does not split one model across multiple machines.** Each worker runs its own
 independent `llama-server`. Scaling across machines means routing *different* jobs to
@@ -96,24 +86,7 @@ candidates = ["qwen3-14b-q4", "qwen3-8b-q6"]   # tried in this order, all else e
 candidates = ["qwen-coder-7b-q6", "qwen3-8b-q6"]
 ```
 
-## Trust: local inference is deny-by-default
-
-Every model-inference entry point (workflow `local_llm` steps, `lao-cli models
-generate`, `lao-cli models load`) checks `trust.allow_model_inference` before doing
-anything, the same deny-by-default pattern as every other dangerous LAO capability:
-
-```toml
-[trust]
-allow_model_inference = true   # required for any local_llm step or `models` command
-allow_model_load = false       # loading/unloading a model on a worker specifically
-allow_network_loopback = false # binding/talking to a worker on 127.0.0.1
-allow_network_private = false  # binding/talking to a worker on a LAN address
-allow_accelerator_use = false  # requesting GPU/accelerator offload
-```
-
-A worker refuses to start bound to a non-loopback address unless
-`worker.auth.enabled = true` — see below. There is no way to expose a worker to the
-public internet by accident through default configuration.
+A worker refuses to start bound to a non-loopback address unless `worker.auth.enabled = true`. There is no way to expose a worker to the public internet through default configuration.
 
 ## Running one local worker
 
@@ -216,45 +189,6 @@ parsing/Codebase Memory indexing, git, compilation, tests, and prompt assembly. 
 routes separate jobs to separate workers; it does not distribute one model's
 transformer layers across machines.
 
-## Workflow example
-
-```yaml
-schema_version: 2
-workflow: "Analyze Code"
-steps:
-  - id: inspect_code
-    run: EchoPlugin
-    input: "trace: execute -> validate -> commit"
-  - id: reason
-    run: local_llm
-    input_from:
-      step: inspect_code
-      output: output
-    with:
-      role: reasoning
-      system: "Be terse."
-      prompt: |
-        Analyze the supplied execution path.
-        Identify likely failure boundaries and retry hazards.
-      generation:
-        max_tokens: 1200
-        temperature: 0.2
-      requirements:
-        minimum_context_tokens: 16384
-        allow_cpu_fallback: true
-```
-
-`with.model: "qwen3-14b-q4"` selects a specific model directly instead of resolving by
-role. The upstream artifact from `input_from` is always appended under an explicit
-`--- Attached artifact (upstream step output) ---` label after the literal `prompt:`
-text (system message first, then prompt, then the labeled attachment — always in that
-order); attachments over 20,000 characters are truncated with an in-band
-`[truncated: N of M characters shown]` marker, never silently. See
-`workflows/local_llm_example.yaml` for a complete runnable example.
-
-```bash
-lao-cli run workflows/local_llm_example.yaml
-```
 
 ## CLI reference
 
@@ -300,13 +234,10 @@ lao-cli workers health
 # 3. Direct generation
 lao-cli models generate --role reasoning --prompt "Say hello in one word."
 
-# 4. Run a workflow that uses local_llm
-lao-cli run workflows/local_llm_example.yaml
-
-# 5. See why a request would route where it does
+# 4. See why a request would route where it does
 lao-cli route explain --role reasoning
 
-# 6. Benchmark the model
+# 5. Benchmark the model
 lao-cli models benchmark qwen3-0.6b
 ```
 
@@ -339,7 +270,6 @@ file, backend, or worker hardware changes.
 
 - **"no [[workers]] configured"** — `lao-cli models generate`/`route explain`/`jobs *`
   all require at least one `[[workers]]` entry in the resolved `lao.toml`.
-- **"requires trust.allow_model_inference = true"** — see the Trust section above.
 - **`route explain` says "no candidate model for the requested role"** — check
   `[models.roles.<role>]` lists at least one candidate, and that candidate has a
   matching `[models.entries.<id>]` (remember to quote IDs containing a period).

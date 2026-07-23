@@ -312,7 +312,7 @@ async fn openai_chat_completions(
     match task::spawn_blocking(move || coordinator.invoke(request)).await {
         Ok(response) if response.status == ModelResponseStatus::Success => {
             let content = match response.output {
-                lao_orchestrator_core::execution::Artifact::Text(text) => text,
+                lao_orchestrator_core::artifact::Artifact::Text(text) => text,
                 other => serde_json::to_string(&other).unwrap_or_default(),
             };
             let finish_reason = match response.finish_reason {

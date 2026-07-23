@@ -3,38 +3,20 @@ name = "lao-orchestrator-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Core DAG engine and backend for LAO Orchestrator"
+description = "Core types and code intelligence for LAO"
 authors.workspace = true
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
 name = "lao_orchestrator_core"
 path = "lib.rs"
-crate-type = ["staticlib", "cdylib", "rlib"]
 
-# Test-only fixture: a fake codebase-memory-mcp executable used by
-# code_intelligence_provider_test.rs to exercise CodebaseMemoryCliProvider against a
-# real child process without depending on the real tool being installed.
-[[bin]]
-name = "fake_codebase_memory_mcp"
-path = "tests/fixtures/fake_codebase_memory_mcp.rs"
-test = false
-doc = false
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_yaml = "0.9"
-libloading = "0.8"
-lao_plugin_api = { path = "../lao_plugin_api" }
-tracing = "0.1"
 toml = "1.1.2"
+tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
-serial_test = "2.0"
-memoffset = "0.9"
-proptest = "1.0"
 tempfile = "3"
-

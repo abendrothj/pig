@@ -5,7 +5,7 @@
 //! TimedOut}`. A job never regresses out of a terminal state.
 
 use crate::backend::{BackendError, BackendGenerationRequest, LoadModelRequest, ModelBackend};
-use lao_orchestrator_core::execution::Artifact;
+use lao_orchestrator_core::artifact::Artifact;
 use lao_orchestrator_core::model::{
     CancellationInfo, CancellationReason, FinishReason, JobId, ModelChunk, ModelExecutionError,
     ModelExecutionMetadata, ModelId, ModelRequest, ModelResponse, ModelResponseStatus, ModelUsage,

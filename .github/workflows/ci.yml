@@ -1,8 +1,6 @@
 name: Continuous Integration
 
 on:
-  push:
-    branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
 
@@ -44,79 +42,11 @@ jobs:
         path: target
         key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
-    - name: Validate docs layout
-      run: |
-        test -f CONTRIBUTING.md
-        test -f SECURITY.md
-        test -f CHANGELOG.md
-        test -f docs/plugin-api.md
-        test -f docs/adr/0005-out-of-process-plugin-host.md
-
     - name: Check Formatting
       run: cargo fmt -- --check
 
     - name: Run Clippy
       run: cargo clippy -- -D warnings
 
-    - name: Build plugins
-      run: bash scripts/build-plugins.sh
-
-    - name: Run CLI Smoke Tests
-      run: |
-        cargo run --bin lao-cli -- plugin-list
-        cargo run --bin lao-cli -- validate workflows/test_loop.yaml
-        cargo run --bin lao-cli -- run workflows/test_loop.yaml
-
     - name: Run Tests
       run: cargo test --workspace
-
-    - name: Run FFI Fuzz Tests
-      run: cargo test -p lao-orchestrator-core --test ffi_fuzz_test
-      env:
-        LAO_FUZZ_SEED: 42
-
-    - name: Release Build Dry Run
-      run: cargo build --workspace --release
-
-  ffi-sanitizers:
-    name: FFI Sanitizers (${{ matrix.sanitizer }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - sanitizer: miri
-            os: ubuntu-latest
-          - sanitizer: address
-            os: ubuntu-latest
-      fail-fast: false
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Install Rust nightly
-      uses: dtolnay/rust-toolchain@nightly
-      with:
-        components: miri, rust-src
-
-    - name: Cache cargo registry
-      uses: actions/cache@v4
-      with:
-        path: ~/.cargo/registry
-        key: ${{ runner.os }}-nightly-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-
-    - name: Build plugins (ASan only)
-      if: matrix.sanitizer == 'address'
-      run: bash scripts/build-plugins.sh
-
-    - name: Run Miri (pure-Rust FFI harnesses)
-      if: matrix.sanitizer == 'miri'
-      run: cargo +nightly miri test -p lao-orchestrator-core --test ffi_fuzz_test
-      env:
-        LAO_FUZZ_SEED: 42
-
-    - name: Run AddressSanitizer (all FFI harnesses)
-      if: matrix.sanitizer == 'address'
-      run: cargo +nightly test -p lao-orchestrator-core --test ffi_fuzz_test --target x86_64-unknown-linux-gnu
-      env:
-        RUSTFLAGS: "-Zsanitizer=address"
-        LAO_FUZZ_SEED: 42

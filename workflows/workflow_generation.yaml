@@ -1,7 +1,0 @@
-workflow: "Workflow Generation Example"
-description: "Generate a workflow from a natural language prompt"
-steps:
-  - run: PromptDispatcherPlugin
-    input: "Summarize this audio file and extract key action items"
-    cache_key: "generated_workflow"
-    description: "Generate workflow plan from prompt"

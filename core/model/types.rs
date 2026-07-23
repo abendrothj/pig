@@ -2,7 +2,7 @@
 //! a workflow step, the scheduler, a worker, and a backend. Nothing in this module
 //! talks to a network or a process — it is pure data plus validation.
 
-use crate::execution::Artifact;
+use crate::artifact::Artifact;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;

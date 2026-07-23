@@ -1,6 +1,0 @@
-workflow: "Quick Test"
-description: "Simple test workflow"
-steps:
-  - run: EchoPlugin
-    input: "Hello from LAO!"
-    cache_key: "test_output" 

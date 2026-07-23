@@ -1,9 +1,0 @@
-workflow: "Markdown Summary with Content"
-steps:
-  - run: EchoPlugin
-    id: step1
-    input: "# LAO Project\n\nLAO is a local AI workflow orchestrator.\n\n## Features\n- Plugin system\n- Workflow execution\n- Parallel processing"
-  - run: SummarizerPlugin
-    id: step2
-    input_from: step1
-    depends_on: [step1]

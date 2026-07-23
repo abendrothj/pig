@@ -1,36 +1,50 @@
-# LAO Architecture Overview
+# lao Architecture
 
-## Core Components
+## Overview
 
-- **DAG Engine**: Executes workflows as directed acyclic graphs, handling step dependencies, retries, caching, and lifecycle hooks.
-  - Supports optional parallel execution per DAG level and emits structured step events for CLI or library consumers.
-- **Plugin System**: Local AI tasks are packaged as shared libraries built against the `lao_plugin_api` C ABI. Plugins are loaded dynamically from the `plugins/` directory and declare IO types and lifecycle hooks.
-- **PromptDispatcherPlugin**: Uses a local LLM (Ollama) and a system prompt file to generate workflows from natural language prompts. Hot-swappable prompt at `core/prompt_dispatcher/prompt/system_prompt.txt`.
-- **Prompt Library & Validation**: Prompts and expected workflows in Markdown/JSON, validated by a test harness and CLI command.
-- **CLI**: Command-line interface for running, validating, scaffolding, scheduling, and inspecting workflows and plugins. Supports prompt-driven generation and validation.
+lao is an inference coordinator for local llama.cpp workers. It routes generation requests to the right worker based on hardware constraints, exposes an OpenAI-compatible gateway, and manages worker lifecycle via systemd.
 
-## Agentic Workflow Generation
-- User enters a prompt through the CLI or an embedding application.
-- PromptDispatcherPlugin uses LLM + system prompt to generate YAML workflow
-- Workflow is parsed, validated, and executed as a DAG
+## Components
 
-## Prompt Validation/Test Harness
-- Loads prompt library
-- Runs each prompt through the dispatcher
-- Compares generated workflow to expected output (structure-aware)
-- CLI and test harness for validation
+- **Worker** (`lao-worker`): Supervises a `llama-server` subprocess, exposes a JSON HTTP API, manages a bounded job queue, and reports hardware capabilities and telemetry.
+- **Coordinator** (`worker::coordinator`): Schedules requests across configured workers using constraint-based selection. Implemented as a synchronous `ModelInvoker` over `reqwest::blocking` — no async runtime required at the call site.
+- **Coordinator server** (`worker::coordinator_server`): Persistent HTTP service exposing an OpenAI-compatible gateway (`POST /v1/chat/completions`, `GET /v1/models`) and a control plane API.
+- **Core** (`lao-orchestrator-core`): Shared types — `ModelRequest`, `ModelResponse`, `ModelRole`, `ReasoningMode`, `PlacementPolicy`, `Artifact`, scheduler logic, model registry.
+- **CLI** (`lao-cli`): Manages workers, models, routes, jobs, and coordinator lifecycle.
 
-## Data Flow
+## Request flow
 
-1. User defines a workflow YAML (steps, dependencies, config).
-2. CLI or library consumer loads and validates the workflow.
-3. DAG engine builds the execution graph.
-4. Each step:
-   - Checks cache (if enabled)
-   - Runs plugin (with retries/lifecycle hooks)
-   - Logs output, errors, and status
-5. CLI or library consumer displays results and logs.
+```
+lao-cli / OpenAI client
+        |
+        v
+Coordinator (scheduler)
+        |-- hard constraints (placement policy, accelerator, locality)
+        |-- scoring (load, capability match)
+        v
+Worker HTTP API  (/v1/generate or /v1/stream)
+        |
+        v
+ModelBackend (llama_cpp)
+        |
+        v
+llama-server subprocess
+        |
+        v
+ModelResponse (output artifact + execution metadata)
+```
 
-## Extensibility
-- Add new plugins by implementing the `lao_plugin_api` ABI, building as a shared library, and placing the library in the `plugins/` directory or a plugin subdirectory.
-- Extend CLI with new commands via Clap.
+## Scheduling
+
+Two layers:
+
+1. **Hard constraints** — reject workers that cannot satisfy the request: wrong accelerator type, remote worker when `PlacementPolicy::LocalOnly` is set, model not loaded or unknown.
+2. **Scoring** — among eligible workers, prefer lower queue depth and higher capability match.
+
+`ReasoningMode` (Auto/Enabled/Disabled) is resolved in the coordinator before dispatch. `Auto` maps to `Enabled` for reasoning/coding roles and when tools are present; `Disabled` otherwise. The backend receives only the resolved value and injects the appropriate control token (`/think` or `/no_think`) for Qwen3-style models.
+
+## Worker isolation
+
+Each worker is an independent OS process running its own `llama-server`. lao does not split model layers across machines — it routes different jobs to different workers. Multiple workers on the same machine use different ports.
+
+Workers can be run directly via `lao worker serve` or installed as a systemd service via `lao worker install`.

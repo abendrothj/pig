@@ -746,7 +746,7 @@ fn failure_response(request: &ModelRequest, error: ModelExecutionError) -> Model
     ModelResponse {
         request_id: request.request_id.clone(),
         status: ModelResponseStatus::Failed,
-        output: lao_orchestrator_core::execution::Artifact::Null,
+        output: lao_orchestrator_core::artifact::Artifact::Null,
         finish_reason: FinishReason::Error,
         model: lao_orchestrator_core::model::ResolvedModel {
             model_id: ModelId::from("unresolved"),
