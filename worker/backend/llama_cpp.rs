@@ -270,7 +270,6 @@ impl LlamaCppBackend {
 /// result (agentic continuation), modifying an already-sent user message would
 /// be semantically wrong; instead the token is injected via the system message
 /// so the directive applies to this completion only.
-
 fn openai_messages(messages: &[pig_core::model::ModelMessage]) -> Vec<serde_json::Value> {
     messages
         .iter()
