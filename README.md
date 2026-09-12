@@ -65,14 +65,7 @@ The `worker/` crate is part of pig's runtime, not an abandoned LAO remnant.
 
 ## Install
 
-**From a release tarball** (recommended):
-
-```bash
-tar xzf pig-0.5.0-aarch64-apple-darwin.tar.gz
-cp pig-0.5.0-aarch64-apple-darwin/bin/pig /usr/local/bin/
-```
-
-**From source:**
+The repository has no published binary release; build from source:
 
 ```bash
 cargo build --release
