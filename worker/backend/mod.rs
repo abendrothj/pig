@@ -12,7 +12,7 @@ pub mod mlx;
 use async_trait::async_trait;
 use pig_core::model::{
     AcceleratorKind, FinishReason, GenerationParameters, ModelChunk, ModelId, ModelMessage,
-    ModelToolCall, RequestId, ReasoningMode,
+    ModelToolCall, ReasoningMode, RequestId,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
