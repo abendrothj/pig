@@ -10,9 +10,8 @@ use futures::{Stream, StreamExt};
 use pig_core::model::{
     latest_matching_benchmark, schedule, BenchmarkFingerprint, BenchmarkSummary, FinishReason,
     ModelChunk, ModelExecutionError, ModelExecutionMetadata, ModelId, ModelInstance, ModelInvoker,
-    ModelRegistry, ModelRequest, ModelResponse, ModelResponseStatus, ModelRole, ModelUsage,
-    ReasoningMode, RoutingExplanation, SchedulingOverrides, WorkerId, WorkerLocality,
-    WorkerSnapshot,
+    ModelRegistry, ModelRequest, ModelResponse, ModelResponseStatus, ModelUsage, ReasoningMode,
+    RoutingExplanation, SchedulingOverrides, WorkerId, WorkerLocality, WorkerSnapshot,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -782,6 +781,7 @@ fn resolve_reasoning_mode(request: &ModelRequest) -> ReasoningMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pig_core::model::ModelRole;
 
     #[test]
     fn workers_config_parses_the_example() {
