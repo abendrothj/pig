@@ -52,6 +52,16 @@ The coordinator applies hard constraints (context window, tool support, reasonin
 capability, accelerator type, placement policy) then scores eligible placements by
 load state, queue depth, throughput, and TTFT. The winning `(worker, model)` pair
 gets the request. See [docs/architecture.md](docs/architecture.md) for internals.
+## Repository layout
+
+- `core/`: shared model, routing, scheduling, and protocol types.
+- `worker/`: the worker HTTP service, backend supervision, job queue, and
+  coordinator implementation; it is the runtime behind `pig worker serve`.
+- `cli/`: the `pig` command-line client that starts workers and exposes the
+  coordinator, model, routing, and job commands.
+
+The `worker/` crate is part of pig's runtime, not an abandoned LAO remnant.
+
 
 ## Install
 
